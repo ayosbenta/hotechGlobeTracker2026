@@ -29,6 +29,7 @@ await build({
       "function doGet(e) { return HotechGlobeTracker.doGet(e); }",
       "function doPost(e) { return HotechGlobeTracker.doPost(e); }",
       "function bootstrapSchema() { return HotechGlobeTracker.bootstrapSchema(); }",
+      "function migrateAuthSchemaPhase03A() { return HotechGlobeTracker.migrateAuthSchemaPhase03A(); }",
     ].join("\n"),
   },
   logLevel: "silent",

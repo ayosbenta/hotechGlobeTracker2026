@@ -117,6 +117,22 @@ export interface Spreadsheet {
   insertSheet(name: string): SpreadsheetSheet;
 }
 
+/** Validates the frozen Phase 02 schema without creating or changing tabs. */
+export function validateFrozenSchema(spreadsheet: Spreadsheet): void {
+  for (const sheetName of SHEET_NAMES) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (sheet === null || sheet.getLastRow() === 0) {
+      throw new SchemaConflictError(sheetName);
+    }
+    const actualHeaders = sheet
+      .getRange(1, 1, 1, sheet.getLastColumn())
+      .getValues()[0];
+    if (!sameHeaders(actualHeaders, SHEET_SCHEMA[sheetName])) {
+      throw new SchemaConflictError(sheetName);
+    }
+  }
+}
+
 function sameHeaders(
   actual: readonly unknown[],
   expected: readonly string[],

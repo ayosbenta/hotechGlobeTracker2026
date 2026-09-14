@@ -6,6 +6,10 @@ import { serialize } from "./core/response";
 import { SheetRepository } from "./core/repository";
 import { createAppsScriptUuidGenerator, systemClock } from "./core/runtime";
 import { initializeSchema } from "./core/schema";
+import {
+  migrateAuthSchema,
+  type MutableScriptProperties,
+} from "./core/auth-schema";
 import { appsScriptRuntime } from "./infrastructure/google-apps-script";
 
 interface AppsScriptEvent {
@@ -69,6 +73,20 @@ export function bootstrapSchema(): void {
       },
       systemClock,
       uuidGenerator,
+    );
+  });
+}
+
+/** Owner-run only. This is intentionally not a web route or live auth flow. */
+export function migrateAuthSchemaPhase03A(): void {
+  const runtime = appsScriptRuntime();
+  const config = loadServerConfig(
+    runtime.PropertiesService.getScriptProperties(),
+  );
+  withScriptLock(runtime.LockService, () => {
+    migrateAuthSchema(
+      runtime.SpreadsheetApp.openById(config.spreadsheetId),
+      runtime.PropertiesService.getScriptProperties() as MutableScriptProperties,
     );
   });
 }
