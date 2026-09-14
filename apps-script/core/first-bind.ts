@@ -29,18 +29,26 @@ export function decideFirstProviderBind(input: {
   if (!input.emailVerified) return "email_unverified";
   const email = normalizeEmail(input.email);
   if (email === null || !input.providerSubject) return "invalid_email";
-  if (
-    input.users.some((user) => user.providerSubject === input.providerSubject)
-  )
-    return "subject_already_bound";
   const matches = input.users.filter(
     (user) =>
       user.accountStatus === "Active" && normalizeEmail(user.email) === email,
   );
+  const subjectOwner = input.users.find(
+    (user) => user.providerSubject === input.providerSubject,
+  );
+  if (
+    subjectOwner !== undefined &&
+    !matches.some((item) => item.userId === subjectOwner.userId)
+  )
+    return "subject_already_bound";
   if (matches.length === 0) return "no_active_match";
   if (matches.length !== 1) return "ambiguous_email";
+  if (subjectOwner !== undefined && subjectOwner.userId !== matches[0].userId)
+    return "subject_already_bound";
   return matches[0].providerSubject === null ||
     matches[0].providerSubject === ""
     ? "allow"
-    : "user_already_bound";
+    : matches[0].providerSubject === input.providerSubject
+      ? "allow"
+      : "user_already_bound";
 }

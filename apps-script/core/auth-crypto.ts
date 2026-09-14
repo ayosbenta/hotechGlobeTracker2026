@@ -8,41 +8,90 @@ export interface CryptoAdapter {
 }
 
 export function createOpaqueToken(random: SecureRandom, length = 32): string {
-  if (!Number.isInteger(length) || length < 32)
+  if (!Number.isInteger(length) || length !== 32)
     throw new Error("Invalid token length.");
-  return random.base64Url(random.bytes(length));
+  const value = random.base64Url(random.bytes(length));
+  if (!isCanonicalBase64Url(value, length))
+    throw new Error("Invalid random token.");
+  return value;
 }
-export function hashSecret(crypto: CryptoAdapter, secret: string): string {
-  return crypto.sha256(secret);
-}
-export function canonicalRequestDigest(
+export function hashSecret(
   crypto: CryptoAdapter,
-  input: {
-    method: string;
-    path: string;
-    audience: string;
-    issuedAt: string;
-    jti: string;
-    body: string;
-  },
-): string {
-  return crypto.sha256(
-    [
-      input.method.toUpperCase(),
-      input.path,
-      input.audience,
-      input.issuedAt,
-      input.jti,
-      input.body,
-    ].join("\n"),
-  );
-}
-export function signInternalRequest(
-  crypto: CryptoAdapter,
+  pepper: string,
   secret: string,
-  digest: string,
 ): string {
-  return crypto.hmacSha256(secret, digest);
+  return crypto.hmacSha256(pepper, secret);
+}
+const BASE64URL = /^[A-Za-z0-9_-]*$/;
+export function decodeBase64Url(
+  value: string,
+  exactBytes?: number,
+): Uint8Array | null {
+  if (!BASE64URL.test(value) || value.includes("=") || value.length % 4 === 1)
+    return null;
+  const alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let accumulator = 0;
+  let bits = 0;
+  const bytes: number[] = [];
+  for (const character of value) {
+    accumulator = (accumulator << 6) | alphabet.indexOf(character);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((accumulator >> bits) & 255);
+    }
+  }
+  if (bits > 0 && (accumulator & ((1 << bits) - 1)) !== 0) return null;
+  const output = new Uint8Array(bytes);
+  return exactBytes === undefined || output.length === exactBytes
+    ? output
+    : null;
+}
+export function encodeBase64Url(bytes: Uint8Array): string {
+  const alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let out = "";
+  let accumulator = 0;
+  let bits = 0;
+  for (const byte of bytes) {
+    accumulator = (accumulator << 8) | byte;
+    bits += 8;
+    while (bits >= 6) {
+      bits -= 6;
+      out += alphabet[(accumulator >> bits) & 63];
+    }
+  }
+  return bits ? out + alphabet[(accumulator << (6 - bits)) & 63] : out;
+}
+export function isCanonicalBase64Url(
+  value: string,
+  exactBytes?: number,
+): boolean {
+  const bytes = decodeBase64Url(value, exactBytes);
+  return bytes !== null && encodeBase64Url(bytes) === value;
+}
+export function signingInput(input: {
+  keyId: string;
+  audience: string;
+  issuedAt: string;
+  expiresAt: string;
+  jti: string;
+  method: string;
+  path: string;
+  bodyDigest: string;
+}): string {
+  return [
+    "v1",
+    input.keyId,
+    input.audience,
+    input.issuedAt,
+    input.expiresAt,
+    input.jti,
+    input.method,
+    input.path,
+    input.bodyDigest,
+  ].join("\n");
 }
 export function constantTimeEquals(left: string, right: string): boolean {
   let mismatch = left.length ^ right.length;
@@ -57,8 +106,5 @@ export function verifyInternalRequest(
   digest: string,
   signature: string,
 ): boolean {
-  return constantTimeEquals(
-    signInternalRequest(crypto, secret, digest),
-    signature,
-  );
+  return constantTimeEquals(crypto.hmacSha256(secret, digest), signature);
 }

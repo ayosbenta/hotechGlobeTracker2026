@@ -8,7 +8,6 @@ interface AppsScriptRuntime {
   LockService: LockServiceAdapter;
   Utilities: {
     getUuid(): string;
-    getRandomBytes(length: number): number[];
     computeDigest(
       algorithm: unknown,
       value: string,
@@ -25,6 +24,7 @@ interface AppsScriptRuntime {
       setMimeType(mimeType: unknown): unknown;
     };
   };
+  Logger: { log(message: string): void };
 }
 
 export function appsScriptRuntime(): AppsScriptRuntime {

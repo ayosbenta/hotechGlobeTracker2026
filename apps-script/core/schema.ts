@@ -110,6 +110,7 @@ export interface SpreadsheetSheet {
     columns: number,
   ): SheetRange;
   appendRow(values: readonly unknown[]): void;
+  deleteRow(rowPosition: number): void;
 }
 
 export interface Spreadsheet {

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { loadAuthConfig } from "../core/auth-config";
 import {
-  canonicalRequestDigest,
   constantTimeEquals,
   createOpaqueToken,
   hashSecret,
@@ -147,20 +146,24 @@ describe("Phase 03A deterministic security primitives", () => {
   it("rejects unsafe auth configuration without revealing its secret", () => {
     const values: Record<string, string> = {
       SPREADSHEET_ID: "abcdefghijklmnopqrstuvwxyz_123",
-      AUTH_SESSION_IDLE_SECONDS: "1800",
-      AUTH_SESSION_ABSOLUTE_SECONDS: "28800",
-      AUTH_SESSION_TOUCH_SECONDS: "300",
-      INTERNAL_REQUEST_AUDIENCE: "https://bff.example.com",
-      INTERNAL_HMAC_KEY_ID: "key-1",
-      INTERNAL_HMAC_SECRET: "x".repeat(32),
-      INTERNAL_CLOCK_SKEW_SECONDS: "60",
-      INTERNAL_REPLAY_RETENTION_SECONDS: "28860",
+      AUTH_SCHEMA_VERSION: "phase-03a-v1",
+      INTERNAL_AUDIENCE: "hotech-globe-tracker.apps-script.nonprod",
+      INTERNAL_HMAC_KEYS_JSON:
+        '{"key-1":{"secret":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","status":"active"}}',
+      INTERNAL_HMAC_ACTIVE_KEY_ID: "key-1",
+      SESSION_TOKEN_PEPPER: "a".repeat(32),
+      CSRF_TOKEN_PEPPER: "b".repeat(32),
+      INTERNAL_CLOCK_SKEW_SECONDS: "30",
+      INTERNAL_ASSERTION_MAX_TTL_SECONDS: "60",
+      SESSION_IDLE_TTL_SECONDS: "1800",
+      SESSION_ABSOLUTE_TTL_SECONDS: "28800",
+      SESSION_TOUCH_INTERVAL_SECONDS: "300",
     };
     expect(
       loadAuthConfig({ getProperty: (key) => values[key] ?? null })
         .sessionIdleSeconds,
     ).toBe(1800);
-    values.AUTH_SESSION_IDLE_SECONDS = "1799";
+    values.SESSION_IDLE_TTL_SECONDS = "1799";
     expect(() =>
       loadAuthConfig({ getProperty: (key) => values[key] ?? null }),
     ).toThrow("Server configuration is unavailable.");
@@ -169,29 +172,21 @@ describe("Phase 03A deterministic security primitives", () => {
   it("uses injected crypto/random adapters and never requires raw values for persistence", () => {
     const random = {
       bytes: (length: number) => new Uint8Array(length).fill(7),
-      base64Url: (bytes: Uint8Array) => `token-${bytes.length}`,
+      base64Url: () => "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
     };
     const crypto = {
       sha256: (value: string) => `hash(${value})`,
       hmacSha256: (secret: string, value: string) => `sig(${secret}:${value})`,
     };
-    expect(createOpaqueToken(random)).toBe("token-32");
-    expect(hashSecret(crypto, "raw-token")).toBe("hash(raw-token)");
-    const digest = canonicalRequestDigest(crypto, {
-      method: "post",
-      path: "/x",
-      audience: "a",
-      issuedAt: "t",
-      jti: "j",
-      body: "{}",
-    });
+    expect(createOpaqueToken(random)).toBe(
+      "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+    );
+    expect(hashSecret(crypto, "pepper", "raw-token")).toBe(
+      "sig(pepper:raw-token)",
+    );
+    const digest = "input";
     expect(
-      verifyInternalRequest(
-        crypto,
-        "secret",
-        digest,
-        "sig(secret:hash(POST\n/x\na\nt\nj\n{}))",
-      ),
+      verifyInternalRequest(crypto, "secret", digest, "sig(secret:input)"),
     ).toBe(true);
     expect(constantTimeEquals("abc", "abd")).toBe(false);
   });

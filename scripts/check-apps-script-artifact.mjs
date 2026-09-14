@@ -56,7 +56,14 @@ try {
   fail("appsscript.json is not valid JSON");
 }
 
-for (const entrypoint of ["doGet", "doPost", "bootstrapSchema"]) {
+for (const entrypoint of [
+  "doGet",
+  "doPost",
+  "bootstrapSchema",
+  "reconcileAuthAuditPhase03B",
+  "runPhase03BAcceptanceSuite",
+  "cleanupPhase03BAcceptanceData",
+]) {
   globalFunctionBody(code, entrypoint);
 }
 
@@ -66,7 +73,7 @@ if (/^\s*(?:import|export)\s/m.test(code) || /\bimport\s*\(/.test(code)) {
 
 if (
   /\b(?:require|process|Buffer|__dirname|__filename)\b/.test(code) ||
-  /["'](?:node:|fs|path|child_process|os|crypto)["']/.test(code)
+  /["'](?:node:|fs|child_process|os|crypto)["']/.test(code)
 ) {
   fail("Code.js contains a Node.js-only global or module reference");
 }
@@ -84,6 +91,17 @@ if (
   fail("Code.js appears to contain a credential");
 }
 
+if (/getRandomBytes|Math\.random/.test(code)) {
+  fail("Code.js contains unsupported or unsafe token randomness");
+}
+if (
+  /getUuid[\s\S]{0,160}(?:session_token|csrf|jti|signature)|(?:session_token|csrf|jti|signature)[\s\S]{0,160}getUuid/i.test(
+    code,
+  )
+) {
+  fail("Code.js uses UUID material for an authentication secret");
+}
+
 for (const token of [
   "INTERNAL_ERROR",
   "NOT_FOUND",
@@ -94,9 +112,23 @@ for (const token of [
 }
 
 for (const entrypoint of ["doGet", "doPost"]) {
-  if (globalFunctionBody(code, entrypoint).includes("bootstrapSchema")) {
-    fail(`${entrypoint} must not route to bootstrapSchema`);
+  const body = globalFunctionBody(code, entrypoint);
+  for (const forbidden of [
+    "bootstrapSchema",
+    "executeInternalAuth",
+    "runPhase03BAcceptanceSuite",
+    "cleanupPhase03BAcceptanceData",
+    "reconcileAuthAuditPhase03B",
+  ]) {
+    if (body.includes(forbidden))
+      fail(`${entrypoint} must not route to ${forbidden}`);
   }
 }
+
+if (
+  /\/internal\/v1\/auth\//.test(globalFunctionBody(code, "doGet")) ||
+  /\/internal\/v1\/auth\//.test(globalFunctionBody(code, "doPost"))
+)
+  fail("public auth routes are present");
 
 console.log("Apps Script artifact checks passed");

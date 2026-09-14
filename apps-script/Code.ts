@@ -11,6 +11,15 @@ import {
   type MutableScriptProperties,
 } from "./core/auth-schema";
 import { appsScriptRuntime } from "./infrastructure/google-apps-script";
+import { loadAuthConfig } from "./core/auth-config";
+import { appsScriptCrypto } from "./core/apps-script-auth-crypto";
+import { executeInternalAuth, type Operation } from "./core/auth-domain";
+import { SheetAuthStore } from "./core/sheet-auth-store";
+import {
+  cleanupPhase03BAcceptanceData as cleanupPhase03BAcceptanceDataInternal,
+  runPhase03BAcceptanceSuite as runPhase03BAcceptanceSuiteInternal,
+  sanitizeAcceptanceSummary,
+} from "./core/phase-03b-acceptance";
 
 interface AppsScriptEvent {
   pathInfo?: string;
@@ -88,5 +97,78 @@ export function migrateAuthSchemaPhase03A(): void {
       runtime.SpreadsheetApp.openById(config.spreadsheetId),
       runtime.PropertiesService.getScriptProperties() as MutableScriptProperties,
     );
+  });
+}
+
+/**
+ * Phase 03B internal domain entrypoint. This is deliberately not connected to
+ * doGet/doPost; Phase 03C supplies the trusted transport adapter.
+ */
+export function executeInternalAuthPhase03B(
+  operation: Operation,
+  envelope: unknown,
+): unknown {
+  const runtime = appsScriptRuntime();
+  const config = loadAuthConfig(
+    runtime.PropertiesService.getScriptProperties(),
+  );
+  return withScriptLock(runtime.LockService, () =>
+    executeInternalAuth(operation, envelope, {
+      config,
+      crypto: appsScriptCrypto(runtime.Utilities),
+      clock: systemClock,
+      ids: createAppsScriptUuidGenerator(runtime.Utilities),
+      store: new SheetAuthStore(
+        runtime.SpreadsheetApp.openById(config.spreadsheetId),
+      ),
+      lock: { run: (work) => work() },
+    }),
+  );
+}
+
+/** Owner/editor-only evidence reconciliation; never routed through web handlers. */
+export function reconcileAuthAuditPhase03B(): number {
+  const runtime = appsScriptRuntime();
+  const config = loadAuthConfig(
+    runtime.PropertiesService.getScriptProperties(),
+  );
+  return withScriptLock(runtime.LockService, () =>
+    new SheetAuthStore(
+      runtime.SpreadsheetApp.openById(config.spreadsheetId),
+    ).reconcileIncompleteAudits(),
+  );
+}
+
+/** Owner/editor-only isolated acceptance suite. It is never web routed. */
+export function runPhase03BAcceptanceSuite(): unknown {
+  const runtime = appsScriptRuntime();
+  const properties =
+    runtime.PropertiesService.getScriptProperties() as MutableScriptProperties;
+  const spreadsheetId = properties.getProperty("SPREADSHEET_ID");
+  if (spreadsheetId === null)
+    throw new Error("Acceptance isolation guard failed.");
+  const summary = runPhase03BAcceptanceSuiteInternal({
+    properties,
+    spreadsheet: runtime.SpreadsheetApp.openById(spreadsheetId),
+    cryptoUtilities: runtime.Utilities,
+  });
+  // Exactly one whitelisted, sanitized execution-log line for editor review.
+  const safeSummary = sanitizeAcceptanceSummary(summary);
+  runtime.Logger.log(JSON.stringify(safeSummary));
+  return safeSummary;
+}
+
+/** Owner/editor-only prefix-scoped cleanup fallback. It is never web routed. */
+export function cleanupPhase03BAcceptanceData(): boolean {
+  const runtime = appsScriptRuntime();
+  const properties =
+    runtime.PropertiesService.getScriptProperties() as MutableScriptProperties;
+  const spreadsheetId = properties.getProperty("SPREADSHEET_ID");
+  if (spreadsheetId === null)
+    throw new Error("Acceptance isolation guard failed.");
+  return cleanupPhase03BAcceptanceDataInternal({
+    properties,
+    spreadsheet: runtime.SpreadsheetApp.openById(spreadsheetId),
+    cryptoUtilities: runtime.Utilities,
   });
 }

@@ -71,6 +71,10 @@ export class MemorySheet implements SpreadsheetSheet {
     this.rows.push([...values]);
   }
 
+  deleteRow(rowPosition: number): void {
+    this.rows.splice(rowPosition - 1, 1);
+  }
+
   valueAt(row: number, column: number): unknown {
     return this.rows[row - 1]?.[column - 1] ?? "";
   }
