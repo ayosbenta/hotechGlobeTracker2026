@@ -1,90 +1,74 @@
-# Next Task — Phase 02 Apps Script and Google Sheets Foundation
+# Next Task — Phase 03 Authentication and RBAC Plan
 
-Previous phase: **Phase 01 UI System and Dashboards — Owner Approved (2026-09-14).** The three role dashboards are frozen visual baselines; material UI changes require an explicit owner change request.
+Previous phase: **Phase 02 Apps Script and Google Sheets Foundation — Owner Approved (2026-09-14).** Phase 02 is frozen, including its schema/bootstrap, safe-envelope, locking, audit, and esbuild artifact workflow.
 
-Status: **Not started**
+Status: **Planned — do not implement until owner authorizes Phase 03.**
 
 ## Objective
 
-Create the server-side Google Apps Script and Google Sheets foundation with typed contracts, schema setup, validation, locking, and audit primitives. Do not connect the React frontend, deploy the web app, or implement authentication or full application workflows.
+Plan and then implement secure login, logout, sessions, and server-enforced Admin, Agent, and Processor RBAC. Preserve the Owner Approved Phase 01 dashboards and do not begin application CRUD, uploads, reports, or workflow mutations.
 
-## Proposed Google Sheets tabs and exact columns
+## Recommended authentication architecture
 
-All tabs use row 1 headers, ISO-8601 UTC timestamps, and server-generated UUIDs. UUIDs—not row numbers—are the only persistent record identities.
+- Use **Google Identity Services (GIS) OpenID Connect** for the initial provider. The backend verifies token signature, issuer, audience, expiry, nonce, and, when chosen, hosted-domain policy. Use the immutable Google `sub` as the provider identity; email is a profile/contact field, never the identity key.
+- Do not propose custom passwords for V1. If the owner later approves them, implement only in a suitable server environment using Argon2id password hashes, unique salts, breach/rate-limit controls, reset flow, and no plaintext or reversible password values in Sheets or Script Properties.
+- **Owner decision required before implementation:** add a same-origin Vercel BFF/API layer for browser-to-API communication. Apps Script web apps cannot be relied on to set the CORS, `Set-Cookie`, or custom response headers needed for secure cross-origin browser sessions. Direct browser-to-Apps-Script bearer/header authentication is not approved.
 
-| Tab | Exact columns |
-|---|---|
-| `Users` | `user_id`, `email`, `full_name`, `mobile_number`, `role`, `account_status`, `created_at`, `updated_at` |
-| `Applications` | `application_id`, `customer_full_name`, `mobile_number`, `email`, `complete_address`, `barangay`, `city_municipality`, `province`, `landmark`, `plan_id`, `plan_name_snapshot`, `monthly_price_snapshot`, `agent_id`, `processor_id`, `current_status`, `job_order_number`, `submitted_at`, `installed_at`, `notes`, `version`, `created_at`, `updated_at` |
-| `Plans` | `plan_id`, `plan_name`, `monthly_price`, `speed_mbps`, `plan_status`, `created_at`, `updated_at` |
-| `Status_History` | `history_id`, `application_id`, `from_status`, `to_status`, `notes`, `job_order_number`, `actor_user_id`, `request_id`, `occurred_at` |
-| `Attachments` | `attachment_id`, `application_id`, `id_type`, `side`, `drive_file_id`, `original_filename`, `mime_type`, `size_bytes`, `uploaded_by_user_id`, `created_at`, `deleted_at` |
-| `Activity_Logs` | `log_id`, `actor_user_id`, `action`, `entity_type`, `entity_id`, `request_id`, `metadata_json`, `occurred_at` |
-| `Settings` | `setting_key`, `setting_value`, `updated_by_user_id`, `updated_at` |
+## Login, logout, identity, and sessions
 
-## Apps Script API structure
+1. The frontend loads GIS, obtains a Google ID token, and sends it by HTTPS POST to the same-origin BFF login endpoint with GIS CSRF/nonce validation.
+2. The BFF verifies the token against the configured Google web-client audience, then sends a short-lived, signed internal assertion to Apps Script. Apps Script maps `provider_subject` to a `Users` record and is authoritative for `user_id`, `role`, and `account_status` on every API authorization decision.
+3. On a valid active user, Apps Script creates a server session. The BFF sets only an opaque, random session token in an `HttpOnly`, `Secure`, `SameSite=Lax`, path-scoped cookie. Never use `localStorage`, URL parameters, or browser-readable persistent tokens.
+4. Default recommendation: 30-minute idle expiry and 8-hour absolute expiry; rotate session token on login and privilege/account changes. Logout revokes the server session and clears the cookie. Deactivation revokes all user sessions.
+5. Apps Script accepts only BFF-signed, short-lived internal requests and validates their signature, audience, timestamp, nonce/jti, and session hash. It reloads the User record rather than trusting role/account state embedded in a browser or BFF claim.
 
-- One Apps Script Web App entrypoint using `doGet(e)` and `doPost(e)`, routing on a versioned `e.pathInfo` such as `/v1/health`, `/v1/applications`, and `/v1/applications/{applicationId}`.
-- Separate typed modules for routing, request parsing, validation, authorization policy, repository adapters, status-transition rules, response serialization, and audit logging.
-- Phase 02 implements schema/bootstrap and health/foundation operations only. CRUD, uploads, login/session issuance, dashboard data replacement, and frontend connection remain later work.
-- Authorization hooks accept an authenticated actor contract but do not select an authentication provider; the authentication method remains an open owner decision.
+## Proposed data migration — owner review required
 
-## Response and error envelope
+Phase 02 headers are frozen; apply a tested Phase 03 migration rather than silently modifying them.
 
-Successful responses:
+| Location | Proposed additions | Purpose |
+|---|---|---|
+| `Users` | `auth_provider`, `provider_subject`, `email_verified_at`, `last_login_at`, `last_logout_at`, `session_version`, `failed_auth_count`, `locked_until` | Federated identity mapping, lifecycle, revocation, and abuse controls. |
+| New `Sessions` tab | `session_id`, `session_token_hash`, `user_id`, `issued_at`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `session_version`, `csrf_secret_hash` | Server-side opaque-session storage; store only token/CSRF hashes. |
 
-```json
-{
-  "ok": true,
-  "requestId": "uuid",
-  "data": {},
-  "meta": { "timestamp": "ISO-8601", "nextCursor": null }
-}
-```
+No custom-password column is proposed. Configuration secrets—Google client ID/audience, internal signing key, allowed BFF origin, and session settings—belong only in Vercel environment variables or Apps Script Script Properties as appropriate, never in Sheets, browser configuration, or logs.
 
-Safe failures:
+## RBAC matrix
 
-```json
-{
-  "ok": false,
-  "requestId": "uuid",
-  "error": { "code": "VALIDATION_ERROR", "message": "Request validation failed.", "details": [] }
-}
-```
+| Capability | Admin | Agent | Processor |
+|---|---:|---:|---:|
+| Sign in while account is active | Yes | Yes | Yes |
+| View all applications | Yes | No | No |
+| Create application | Yes | Yes | No |
+| View own applications | Yes | Yes | No |
+| View queue/assigned work | Yes | No | Yes |
+| Edit customer data | Yes | Before processing only | Limited fields only |
+| Assign processor | Yes | No | No |
+| Update processing status | Yes | No | Yes |
+| Manage users, plans, settings, reports | Yes | No | No |
 
-Error codes include `VALIDATION_ERROR`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `RATE_LIMITED`, and `INTERNAL_ERROR`. Public responses never include stack traces, Sheet identifiers, Drive identifiers, or raw exception text.
+All authorization occurs in Apps Script against the active User record. Frontend route guards and menus are usability controls only.
 
-## UUID, concurrency, and audit strategy
+## Security controls
 
-- Generate UUIDs only on the server with `Utilities.getUuid()` for every primary key and `request_id`; reject client-supplied identity fields for creates.
-- Use `LockService.getScriptLock()` around all multi-row writes. Acquire with a bounded wait, return `CONFLICT` on contention, and release in `finally`.
-- Enforce optimistic concurrency with `Applications.version`: updates must supply the current version, then atomically increment it while holding the script lock.
-- Append immutable `Status_History` rows for every status transition and immutable `Activity_Logs` rows for important reads, mutations, authorization failures, and bootstrap operations. Include actor, entity, action, request ID, UTC timestamp, and JSON metadata without secrets or public Drive URLs.
+- **Inactive accounts:** reject login with a generic safe response, revoke all sessions, deny every authenticated request, and append a security/activity event without sensitive token data.
+- **CSRF:** GIS login uses its double-submit/nonce checks. Same-origin cookie-backed mutations use a synchronizer or double-submit CSRF token, verified by the BFF; no unsafe request is authorized from `Origin` alone.
+- **Replay:** validate Google token claims and nonce; store/expire login nonces and BFF assertion `jti` values; enforce timestamp windows and single-use handling under `LockService` where Sheets writes occur.
+- **Brute force:** rate-limit login and session-validation endpoints at the BFF by a privacy-preserving key; apply exponential delay/temporary lock for repeated failed authentication without disclosing account existence.
+- **Session theft:** HTTPS only, `HttpOnly`/`Secure` cookies, token hashing at rest, rotation, idle/absolute expiry, revocation/session-version checks, no token logging, and logout/deactivation invalidation.
+- **CORS:** BFF is same-origin with the frontend. It allowlists the production origin only after deployment approval; Apps Script origin checks remain defense in depth, not authentication. No credentialed cross-origin Apps Script fetch is planned.
 
-## Environment and secret handling
+## API contract and excluded work
 
-- Store Sheet ID, Drive folder IDs, allowed origins, and server-only configuration exclusively in Apps Script Script Properties; never commit them or expose them in JSON responses.
-- Keep browser configuration public and minimal in `.env.example`; it may later contain a public API base URL but no credentials, OAuth secrets, service-account material, or Sheet/Drive IDs.
-- Provide a startup configuration validator that fails safely with a generic server error when required Script Properties are absent or malformed.
+Planned BFF-facing endpoints are login, logout, current-session (`me`), and protected API forwarding. Apps Script adds only the corresponding authentication/session verification and authorization primitives. All responses retain the Phase 02 safe JSON envelope; clients branch on `ok`/`error.code`.
 
-## Test strategy
+Excluded from Phase 03: dashboard redesign, application CRUD/workflow status changes, uploads, Drive access, reporting, production deployment, and custom-password implementation.
 
-- Unit-test pure schema, validation, response-envelope, status-transition, UUID, and authorization-policy modules locally with deterministic clock/UUID adapters.
-- Test repository adapters with mocked Spreadsheet, LockService, PropertiesService, and Session/actor dependencies; cover lock contention, stale versions, duplicate request IDs, malformed payloads, and audit append failures.
-- Add an Apps Script smoke-test runner for an isolated development spreadsheet that verifies headers, idempotent schema initialization, and no row-number identity assumptions.
-- Before any frontend connection, run the existing frontend quality suite unchanged and manually verify the health/foundation API only after a separately approved deployment step.
+## Test and owner-acceptance plan
 
-## Excluded
-
-- Frontend API connection, dashboard mock-data replacement, or changes to the frozen dashboards.
-- Authentication provider selection, login/session implementation, live RBAC, CRUD workflows, uploads, Drive access, reports, and production deployment.
-- GitHub push or deployment.
-
-## Acceptance criteria
-
-- Schema bootstrap creates or validates exactly the documented tab headers without using row numbers as IDs.
-- All foundation responses follow the documented safe envelope and do not expose configuration or internal exceptions.
-- UUID, lock, optimistic-version, and immutable-audit primitives are covered by tests.
-- No secrets are committed; lint, typecheck, tests, and build pass for changed code.
+- Unit-test OIDC claim checks, identity mapping, session hashing/expiry/rotation/revocation, CSRF/nonce/replay controls, inactive accounts, and every RBAC decision.
+- Mock BFF, Apps Script Properties/Lock/Sheet adapters, clock, UUID/random-token sources, and audit writes. Test stale/deactivated accounts after login, forged roles, reused assertions, expired sessions, and generic error redaction.
+- Integration-test an isolated non-production Google client, Vercel preview/BFF, and Apps Script project: login, refresh within idle window, expiry, logout, deactivation, and all role denial/allow cases.
+- Owner acceptance requires review of the BFF addition, Google OAuth configuration, secret-access controls, the exact `Users`/`Sessions` migration, all role behavior, and the existing dashboard regression. No production accounts, Sheet, Web App, or deployment without separate approval.
 
 Approval state: In Progress

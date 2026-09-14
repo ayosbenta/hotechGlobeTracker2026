@@ -1,6 +1,6 @@
 # Project Memory
 
-Updated: 2026-09-13
+Updated: 2026-09-14
 
 ## Identity
 
@@ -64,6 +64,12 @@ The three PNGs in `design-references/` are the required dashboard direction. Pre
 - Phase 01 dashboard UI system was Owner Approved on 2026-09-14. The Admin, Agent, and Processor dashboards are frozen visual baselines; material UI changes require an explicit owner change request.
 - Canonical dashboard routes are `/admin/dashboard`, `/agent/dashboard`, and `/processor/dashboard`; their short role routes redirect to the canonical paths.
 - Phase 01 verification passed on 2026-09-14: formatting, lint, typecheck, 5 unit tests, production PWA build, and 18 Playwright checks across all role routes at 360, 390, 430, 768, and 1280 px.
-- Phase 02 is planned only: establish Google Apps Script and Google Sheets foundations without connecting the frontend or implementing authentication/workflows.
+- Phase 02 Apps Script and Google Sheets Foundation was Owner Approved on 2026-09-14 and is a frozen backend baseline; future material backend changes require an explicit owner change request.
+- Phase 02 adds a typed, test-covered Apps Script foundation: exact Sheet-schema bootstrap, safe JSON envelopes, health-only public routing, UUID/request primitives, lock/version primitives, status-transition configuration, configuration validation, and append-only audit primitives.
+- Phase 02 now has a deterministic esbuild Apps Script build: `gas:build` produces an ignored local `apps-script/generated/` directory containing only `Code.js` and `appsscript.json`; `gas:check` validates global entrypoints and artifact safety; `gas:test` runs Apps Script tests plus build/check.
+- The generated bundle exposes global `doGet(e)`, `doPost(e)`, and editor-only `bootstrapSchema()` without unresolved modules, Node-only APIs, or source maps. Owner manual verification passed in isolated Apps Script V8: the bootstrap created all seven canonical tabs and exact headers; reruns produced no duplicate tabs/headers; conflicting non-empty headers failed without overwrite. No production resource or Web App deployment was used.
+- Phase 02 does not connect the frontend or change the frozen dashboards; it does not implement authentication, sessions, RBAC, CRUD, uploads, Drive access, deployment, or persistent idempotency storage.
+- Bootstrap targets only the pre-provisioned Script-Properties Sheet ID and is an Apps Script editor function, not a web endpoint. It is idempotent and rejects conflicting non-empty headers.
+- Authentication, caller-based rate limiting, persistent idempotency storage, and CRUD mutation/audit recovery semantics remain deferred decisions for their respective phases. Phase 02 implements only request-ID propagation and reusable idempotency interfaces, with no persistent mutation/retry store.
 - Current task is always in `NEXT_TASK.md`.
 - Owner approval is required before a phase is marked FINAL.

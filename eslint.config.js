@@ -30,4 +30,18 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ["apps-script/**/*.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.es2021,
+      },
+    },
+  },
+  {
+    files: ["apps-script/Code.ts"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": "off",
+    },
+  },
 );
