@@ -12,6 +12,8 @@
 | D-006 | 2026-09-13 | Supplied Admin, Agent, and Processor dashboard images are the required visual direction. |
 | D-007 | 2026-09-13 | Codex work is phased; only owner-approved phases are FINAL. |
 | D-008 | 2026-09-13 | Owner approved the Phase 00 Foundation as the frozen implementation baseline. |
+| D-009 | 2026-09-14 | Canonical dashboard routes are `/admin/dashboard`, `/agent/dashboard`, and `/processor/dashboard`; the corresponding short role routes redirect to them. |
+| D-010 | 2026-09-14 | Owner approved the Phase 01 Admin, Agent, and Processor dashboards as frozen visual baselines. Material changes to their layout, hierarchy, palette, navigation, cards, charts, tables, spacing, or role-specific menus require an explicit owner change request. |
 
 ## Open decisions
 

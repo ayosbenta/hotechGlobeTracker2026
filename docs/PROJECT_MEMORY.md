@@ -61,6 +61,9 @@ The three PNGs in `design-references/` are the required dashboard direction. Pre
 - Foundation includes React + TypeScript + Vite, Tailwind, shadcn-compatible setup, Lucide, React Router, Recharts, PWA shell, typed portal routes, and Admin/Agent/Processor placeholders only.
 - Tooling verification passed on 2026-09-13: clean install, formatting, lint, typecheck, 3 unit tests, production build, and Playwright overflow checks at 360, 390, 430, 768, and 1280 px.
 - Dashboard reference images remain preserved for Phase 01.
-- Phase 01 is planned only: implement the approved UI system and role-specific dashboards without authentication, integrations, or business workflows.
+- Phase 01 dashboard UI system was Owner Approved on 2026-09-14. The Admin, Agent, and Processor dashboards are frozen visual baselines; material UI changes require an explicit owner change request.
+- Canonical dashboard routes are `/admin/dashboard`, `/agent/dashboard`, and `/processor/dashboard`; their short role routes redirect to the canonical paths.
+- Phase 01 verification passed on 2026-09-14: formatting, lint, typecheck, 5 unit tests, production PWA build, and 18 Playwright checks across all role routes at 360, 390, 430, 768, and 1280 px.
+- Phase 02 is planned only: establish Google Apps Script and Google Sheets foundations without connecting the frontend or implementing authentication/workflows.
 - Current task is always in `NEXT_TASK.md`.
 - Owner approval is required before a phase is marked FINAL.

@@ -1,28 +1,43 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
-import { PortalPlaceholder } from "@/pages/portal-placeholder";
+import { DashboardPage } from "@/pages/dashboard-page";
 import { APP_ROUTES } from "@/routes/constants";
 
 export function App() {
   return (
     <Routes>
       <Route
-        element={<Navigate replace to={APP_ROUTES.admin} />}
+        element={<Navigate replace to={APP_ROUTES.adminDashboard} />}
         path={APP_ROUTES.home}
       />
       <Route
-        element={<PortalPlaceholder role="admin" />}
+        element={<Navigate replace to={APP_ROUTES.adminDashboard} />}
         path={APP_ROUTES.admin}
       />
       <Route
-        element={<PortalPlaceholder role="agent" />}
+        element={<Navigate replace to={APP_ROUTES.agentDashboard} />}
         path={APP_ROUTES.agent}
       />
       <Route
-        element={<PortalPlaceholder role="processor" />}
+        element={<Navigate replace to={APP_ROUTES.processorDashboard} />}
         path={APP_ROUTES.processor}
       />
-      <Route element={<Navigate replace to={APP_ROUTES.admin} />} path="*" />
+      <Route
+        element={<DashboardPage role="admin" />}
+        path={APP_ROUTES.adminDashboard}
+      />
+      <Route
+        element={<DashboardPage role="agent" />}
+        path={APP_ROUTES.agentDashboard}
+      />
+      <Route
+        element={<DashboardPage role="processor" />}
+        path={APP_ROUTES.processorDashboard}
+      />
+      <Route
+        element={<Navigate replace to={APP_ROUTES.adminDashboard} />}
+        path="*"
+      />
     </Routes>
   );
 }

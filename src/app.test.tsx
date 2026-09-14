@@ -5,20 +5,18 @@ import { describe, expect, it } from "vitest";
 import { App } from "@/app";
 
 describe("App routes", () => {
-  it("renders the Agent portal placeholder", () => {
+  it("renders the Agent dashboard", () => {
     render(
-      <MemoryRouter initialEntries={["/agent"]}>
+      <MemoryRouter initialEntries={["/agent/dashboard"]}>
         <App />
       </MemoryRouter>,
     );
 
     expect(
-      screen.getByText("Agent portal", { selector: "p" }),
+      screen.getByRole("heading", { name: "Good morning, Maria!" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", {
-        name: "The foundation is ready for your workflow.",
-      }),
+      screen.getByRole("button", { name: "Add New Application" }),
     ).toBeInTheDocument();
   });
 });

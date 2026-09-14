@@ -4,8 +4,8 @@ import { APP_ROUTES, routeForRole } from "@/routes/constants";
 
 describe("routeForRole", () => {
   it("returns the canonical portal route for each role", () => {
-    expect(routeForRole("admin")).toBe(APP_ROUTES.admin);
-    expect(routeForRole("agent")).toBe(APP_ROUTES.agent);
-    expect(routeForRole("processor")).toBe(APP_ROUTES.processor);
+    expect(routeForRole("admin")).toBe(APP_ROUTES.adminDashboard);
+    expect(routeForRole("agent")).toBe(APP_ROUTES.agentDashboard);
+    expect(routeForRole("processor")).toBe(APP_ROUTES.processorDashboard);
   });
 });

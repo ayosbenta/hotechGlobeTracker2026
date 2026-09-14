@@ -1,65 +1,90 @@
-# Next Task — Phase 01 UI System and Dashboards
+# Next Task — Phase 02 Apps Script and Google Sheets Foundation
 
-Previous phase: **Phase 00 Foundation — Owner Approved (2026-09-13).** It is a frozen baseline.
+Previous phase: **Phase 01 UI System and Dashboards — Owner Approved (2026-09-14).** The three role dashboards are frozen visual baselines; material UI changes require an explicit owner change request.
 
 Status: **Not started**
 
 ## Objective
 
-Implement the approved dashboard UI system and populated mock dashboards for Admin, Agent, and Processor. Match the supplied reference images closely while retaining the Phase 00 foundation.
+Create the server-side Google Apps Script and Google Sheets foundation with typed contracts, schema setup, validation, locking, and audit primitives. Do not connect the React frontend, deploy the web app, or implement authentication or full application workflows.
 
-## Required visual references
+## Proposed Google Sheets tabs and exact columns
 
-- `design-references/admin-dashboard.png`
-- `design-references/agent-dashboard.png`
-- `design-references/processor-dashboard.png`
+All tabs use row 1 headers, ISO-8601 UTC timestamps, and server-generated UUIDs. UUIDs—not row numbers—are the only persistent record identities.
 
-These are required direction, not generic inspiration. Preserve their layout hierarchy, blue/cyan visual system, sidebar structure, card density, charts, tables, spacing, and role-specific menus.
+| Tab | Exact columns |
+|---|---|
+| `Users` | `user_id`, `email`, `full_name`, `mobile_number`, `role`, `account_status`, `created_at`, `updated_at` |
+| `Applications` | `application_id`, `customer_full_name`, `mobile_number`, `email`, `complete_address`, `barangay`, `city_municipality`, `province`, `landmark`, `plan_id`, `plan_name_snapshot`, `monthly_price_snapshot`, `agent_id`, `processor_id`, `current_status`, `job_order_number`, `submitted_at`, `installed_at`, `notes`, `version`, `created_at`, `updated_at` |
+| `Plans` | `plan_id`, `plan_name`, `monthly_price`, `speed_mbps`, `plan_status`, `created_at`, `updated_at` |
+| `Status_History` | `history_id`, `application_id`, `from_status`, `to_status`, `notes`, `job_order_number`, `actor_user_id`, `request_id`, `occurred_at` |
+| `Attachments` | `attachment_id`, `application_id`, `id_type`, `side`, `drive_file_id`, `original_filename`, `mime_type`, `size_bytes`, `uploaded_by_user_id`, `created_at`, `deleted_at` |
+| `Activity_Logs` | `log_id`, `actor_user_id`, `action`, `entity_type`, `entity_id`, `request_id`, `metadata_json`, `occurred_at` |
+| `Settings` | `setting_key`, `setting_value`, `updated_by_user_id`, `updated_at` |
 
-## Proposed component structure
+## Apps Script API structure
 
-- `dashboard-shell`: desktop gradient sidebar, slim top header, mobile drawer, search, notifications, and profile affordances.
-- `role-navigation`: role-owned menus and active states; no Admin controls in Agent or Processor portals.
-- `dashboard-page`: shared responsive canvas, greeting/context header, and ordered content regions.
-- `metric-card` and `status-badge`: shared icon/color/label/value treatments for operational KPI cards.
-- `chart-card`: responsive Recharts line, donut, and bar wrappers with legends, empty/loading/error states, and mock data adapters.
-- `data-table-card`: filter/search toolbar, contained desktop table, mobile card/list presentation, status pills, and action affordances.
-- `dashboard-states`: skeleton, empty, and error variants for every dashboard region.
+- One Apps Script Web App entrypoint using `doGet(e)` and `doPost(e)`, routing on a versioned `e.pathInfo` such as `/v1/health`, `/v1/applications`, and `/v1/applications/{applicationId}`.
+- Separate typed modules for routing, request parsing, validation, authorization policy, repository adapters, status-transition rules, response serialization, and audit logging.
+- Phase 02 implements schema/bootstrap and health/foundation operations only. CRUD, uploads, login/session issuance, dashboard data replacement, and frontend connection remain later work.
+- Authorization hooks accept an authenticated actor contract but do not select an authentication provider; the authentication method remains an open owner decision.
 
-## Routes included
+## Response and error envelope
 
-- `/admin` — five application KPI cards, monthly line chart, status donut, and recent-applications table; menu: Dashboard, Applications, Agents, Processors, Reports, Settings.
-- `/agent` — prominent Add New Application action, five personal KPI cards, progress donut, submission trend chart, and recent-submissions table; menu: Dashboard, New Application, My Applications, Globe Plans, Profile.
-- `/processor` — five workload KPI cards, priority queue, productivity bar chart, and quick stats; menu: Dashboard, Application Queue, My Assigned, Profile.
+Successful responses:
 
-Route paths remain Phase 00 paths. Navigation destinations beyond these dashboard routes remain non-functional visual placeholders until their assigned phases.
+```json
+{
+  "ok": true,
+  "requestId": "uuid",
+  "data": {},
+  "meta": { "timestamp": "ISO-8601", "nextCursor": null }
+}
+```
 
-## Responsive strategy
+Safe failures:
 
-- At `lg` and above, use the reference-like fixed sidebar and multi-column dashboard grids.
-- At `md`, preserve information order while reducing chart/table columns and wrapping filters safely.
-- At 360/390/430 px, use the existing drawer navigation, full-width KPI cards, one-column chart regions, 44 px controls, and contained horizontal table areas or accessible stacked data cards.
-- Ensure charts use responsive containers; keep legends readable and essential actions visible without horizontal page overflow.
+```json
+{
+  "ok": false,
+  "requestId": "uuid",
+  "error": { "code": "VALIDATION_ERROR", "message": "Request validation failed.", "details": [] }
+}
+```
 
-## Visual verification plan
+Error codes include `VALIDATION_ERROR`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `RATE_LIMITED`, and `INTERNAL_ERROR`. Public responses never include stack traces, Sheet identifiers, Drive identifiers, or raw exception text.
 
-- Compare rendered Admin, Agent, and Processor pages against all three supplied PNGs at desktop width for navigation, card order, chart/table placement, spacing, palette, and menu specificity.
-- Run Playwright at 360, 390, 430, 768, and 1280 px for all three role routes; assert no horizontal page overflow, visible primary actions, and usable navigation.
-- Add component/unit coverage for role navigation and key dashboard states; run lint, typecheck, unit tests, Playwright, and production build.
+## UUID, concurrency, and audit strategy
+
+- Generate UUIDs only on the server with `Utilities.getUuid()` for every primary key and `request_id`; reject client-supplied identity fields for creates.
+- Use `LockService.getScriptLock()` around all multi-row writes. Acquire with a bounded wait, return `CONFLICT` on contention, and release in `finally`.
+- Enforce optimistic concurrency with `Applications.version`: updates must supply the current version, then atomically increment it while holding the script lock.
+- Append immutable `Status_History` rows for every status transition and immutable `Activity_Logs` rows for important reads, mutations, authorization failures, and bootstrap operations. Include actor, entity, action, request ID, UTC timestamp, and JSON metadata without secrets or public Drive URLs.
+
+## Environment and secret handling
+
+- Store Sheet ID, Drive folder IDs, allowed origins, and server-only configuration exclusively in Apps Script Script Properties; never commit them or expose them in JSON responses.
+- Keep browser configuration public and minimal in `.env.example`; it may later contain a public API base URL but no credentials, OAuth secrets, service-account material, or Sheet/Drive IDs.
+- Provide a startup configuration validator that fails safely with a generic server error when required Script Properties are absent or malformed.
+
+## Test strategy
+
+- Unit-test pure schema, validation, response-envelope, status-transition, UUID, and authorization-policy modules locally with deterministic clock/UUID adapters.
+- Test repository adapters with mocked Spreadsheet, LockService, PropertiesService, and Session/actor dependencies; cover lock contention, stale versions, duplicate request IDs, malformed payloads, and audit append failures.
+- Add an Apps Script smoke-test runner for an isolated development spreadsheet that verifies headers, idempotent schema initialization, and no row-number identity assumptions.
+- Before any frontend connection, run the existing frontend quality suite unchanged and manually verify the health/foundation API only after a separately approved deployment step.
 
 ## Excluded
 
-- Authentication and server-enforced RBAC implementation.
-- Google Apps Script, Sheets, Drive, and any live API connection.
-- Application create/edit/detail workflows, actual search/filter behavior, uploads, reports, or user management.
-- Deployment or GitHub push.
+- Frontend API connection, dashboard mock-data replacement, or changes to the frozen dashboards.
+- Authentication provider selection, login/session implementation, live RBAC, CRUD workflows, uploads, Drive access, reports, and production deployment.
+- GitHub push or deployment.
 
 ## Acceptance criteria
 
-- All three dashboard compositions are visually faithful to the approved references at desktop width.
-- Role menus and visible controls remain distinct and match the approved information hierarchy.
-- Every dashboard region provides populated mock, loading, empty, and error states.
-- No horizontal page overflow at 360, 390, 430, 768, or 1280 px.
-- Lint, typecheck, tests, Playwright, and production build pass.
+- Schema bootstrap creates or validates exactly the documented tab headers without using row numbers as IDs.
+- All foundation responses follow the documented safe envelope and do not expose configuration or internal exceptions.
+- UUID, lock, optimistic-version, and immutable-audit primitives are covered by tests.
+- No secrets are committed; lint, typecheck, tests, and build pass for changed code.
 
 Approval state: In Progress
