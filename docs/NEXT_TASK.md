@@ -243,15 +243,34 @@ clarity, finalized at MVP-2A).
 
 ### F. Optimistic concurrency / version behavior
 
-Reuses `apps-script/core/versioning.ts`'s frozen `assertCurrentVersion` unchanged:
+Applications (which have a `version` column in the frozen Phase 02 schema) reuse
+`apps-script/core/versioning.ts`'s frozen `assertCurrentVersion` unchanged:
 
-- Every mutating request to an existing row includes the `version` the client last read.
+- Every mutating request to an existing Applications row includes the `version` the client last
+  read.
 - `assertCurrentVersion` throws `StaleVersionError` on any mismatch; the ingress classifies this as
   `CONFLICT` (matching the frozen Phase 03C1A error-classification pattern), never silently
   overwriting a concurrent edit.
 - On success, `version` increments by exactly 1 and the new value is returned to the caller.
 - Creation operations do not use this check (no prior version exists); the created row starts at
   `version = 1`.
+
+**Plans have no `version` column in the frozen Phase 02 schema (D-041, correcting the earlier
+assumption this section made before MVP-2A implementation).** Plan mutations instead use the row's
+exact current `updated_at` value as the optimistic concurrency token:
+
+- Every mutating request to an existing Plan includes the `expected_updated_at` value the client
+  last read.
+- Under the same `withScriptLock` used for every mutation, the authoritative row's current
+  `updated_at` is compared byte-for-byte against `expected_updated_at`; any mismatch is classified
+  `CONFLICT`, never silently overwriting a concurrent edit — same fail-safe behavior as
+  `StaleVersionError`, just keyed on `updated_at` instead of an integer `version`.
+- On success, `updated_at` is set to a new authoritative value (server-generated, never
+  client-supplied) and returned to the caller as the new token for the next mutation.
+- Creation operations do not use this check (no prior row exists).
+- This pattern is specific to Plans. Any future entity without a `version` column follows the same
+  `updated_at`-token approach; any entity with a `version` column uses `assertCurrentVersion`
+  unchanged.
 
 ### G. Locking and audit behavior
 
