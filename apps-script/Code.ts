@@ -18,6 +18,7 @@ import { SheetAuthStore } from "./core/sheet-auth-store";
 import { executeCrud } from "./core/crud-domain";
 import { PlansRepository } from "./core/plans-repository";
 import { UsersRepository } from "./core/users-repository";
+import { ApplicationsRepository } from "./core/applications-repository";
 import type { CrudOperation } from "./core/contracts";
 import {
   cleanupPhase03BAcceptanceData as cleanupPhase03BAcceptanceDataInternal,
@@ -178,7 +179,11 @@ export function executeCrudPhase2A(
       lock: { run: (work) => work() },
       plansRepository: new PlansRepository(repository.requiredSheet("Plans")),
       usersRepository: new UsersRepository(repository.requiredSheet("Users")),
+      applicationsRepository: new ApplicationsRepository(
+        repository.requiredSheet("Applications"),
+      ),
       activityLogSheet: repository.requiredSheet("Activity_Logs"),
+      statusHistorySheet: repository.requiredSheet("Status_History"),
     });
   });
 }

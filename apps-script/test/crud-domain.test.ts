@@ -13,6 +13,7 @@ import type { AuthConfig } from "../core/auth-config";
 import { signingInput } from "../core/auth-crypto";
 import { PlansRepository } from "../core/plans-repository";
 import { UsersRepository } from "../core/users-repository";
+import { ApplicationsRepository } from "../core/applications-repository";
 import { MemorySheet } from "./helpers";
 import type { CrudOperation } from "../core/contracts";
 
@@ -94,6 +95,11 @@ const OPERATION_PATHS: Record<CrudOperation, string> = {
   plans_update: "/internal/v1/crud/plans/update",
   users_list: "/internal/v1/crud/users/list",
   users_update: "/internal/v1/crud/users/update",
+  applications_list: "/internal/v1/crud/applications/list",
+  applications_get: "/internal/v1/crud/applications/get",
+  applications_create: "/internal/v1/crud/applications/create",
+  applications_update: "/internal/v1/crud/applications/update",
+  applications_assign: "/internal/v1/crud/applications/assign",
 };
 
 function envelope(
@@ -188,7 +194,11 @@ function addSession(
 function buildDeps(
   store: Store,
   clock: Clock,
-): CrudDependencies & { usersSheet: MemorySheet } {
+): CrudDependencies & {
+  usersSheet: MemorySheet;
+  plansSheet: MemorySheet;
+  applicationsSheet: MemorySheet;
+} {
   let id = 0;
   const sheet = new MemorySheet();
   sheet.appendRow([
@@ -211,7 +221,33 @@ function buildDeps(
     "created_at",
     "updated_at",
   ]);
+  const applicationsSheet = new MemorySheet();
+  applicationsSheet.appendRow([
+    "application_id",
+    "customer_full_name",
+    "mobile_number",
+    "email",
+    "complete_address",
+    "barangay",
+    "city_municipality",
+    "province",
+    "landmark",
+    "plan_id",
+    "plan_name_snapshot",
+    "monthly_price_snapshot",
+    "agent_id",
+    "processor_id",
+    "current_status",
+    "job_order_number",
+    "submitted_at",
+    "installed_at",
+    "notes",
+    "version",
+    "created_at",
+    "updated_at",
+  ]);
   const activityLogSheet = new MemorySheet();
+  const statusHistorySheet = new MemorySheet();
   return {
     config,
     crypto,
@@ -221,9 +257,34 @@ function buildDeps(
     lock: { run: <T>(work: () => T) => work() },
     plansRepository: new PlansRepository(sheet),
     usersRepository: new UsersRepository(usersSheet),
+    applicationsRepository: new ApplicationsRepository(applicationsSheet),
     activityLogSheet,
+    statusHistorySheet,
     usersSheet,
+    plansSheet: sheet,
+    applicationsSheet,
   };
+}
+
+function seedPlanRow(
+  deps: { plansRepository: PlansRepository },
+  overrides: Partial<{
+    planId: string;
+    planName: string;
+    monthlyPrice: number;
+    speedMbps: number;
+    planStatus: "Active" | "Inactive";
+  }> = {},
+): void {
+  deps.plansRepository.create({
+    planId: overrides.planId ?? "plan-1",
+    planName: overrides.planName ?? "Fiber 100",
+    monthlyPrice: overrides.monthlyPrice ?? 1299,
+    speedMbps: overrides.speedMbps ?? 100,
+    planStatus: overrides.planStatus ?? "Active",
+    createdAt: "2026-09-14T00:00:00.000Z",
+    updatedAt: "2026-09-14T00:00:00.000Z",
+  });
 }
 
 function seedUserRow(
@@ -1113,5 +1174,923 @@ describe("MVP-2B CRUD domain — Users", () => {
     expect(typeof requestId).toBe("string");
     expect(() => JSON.parse(String(metadataJson))).not.toThrow();
     expect(typeof occurredAt).toBe("string");
+  });
+});
+
+describe("MVP-2C/2D/2E CRUD domain — Applications", () => {
+  it("Admin sees all applications; Agent sees only own; Processor sees only assigned", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "proc-1",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    deps.applicationsRepository.create({
+      applicationId: "a2",
+      customerFullName: "Customer B",
+      mobileNumber: "09172222222",
+      email: "",
+      completeAddress: "Addr B",
+      barangay: "Brgy B",
+      cityMunicipality: "City B",
+      province: "Province B",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-2",
+      processorId: "",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+
+    const admin = addUser(store, { role: "Admin" });
+    const { sessionToken: adminToken } = addSession(store, admin);
+    const adminResult = executeCrud(
+      "applications_list",
+      envelope("applications_list", { session_token: adminToken }, clock),
+      deps,
+    );
+    expect((adminResult.data as unknown[]).length).toBe(2);
+
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken: agentToken } = addSession(store, agent);
+    const agentResult = executeCrud(
+      "applications_list",
+      envelope("applications_list", { session_token: agentToken }, clock),
+      deps,
+    );
+    expect(
+      (agentResult.data as { applicationId: string }[]).map(
+        (a) => a.applicationId,
+      ),
+    ).toEqual(["a1"]);
+
+    const processor = addUser(store, { userId: "proc-1", role: "Processor" });
+    const { sessionToken: procToken } = addSession(store, processor);
+    const procResult = executeCrud(
+      "applications_list",
+      envelope("applications_list", { session_token: procToken }, clock),
+      deps,
+    );
+    expect(
+      (procResult.data as { applicationId: string }[]).map(
+        (a) => a.applicationId,
+      ),
+    ).toEqual(["a1"]);
+  });
+
+  it("ignores a client-supplied agent_id filter as authorization for a non-Admin", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-other",
+      processorId: "",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken } = addSession(store, agent);
+    const result = executeCrud(
+      "applications_list",
+      envelope(
+        "applications_list",
+        { session_token: sessionToken, agent_id: "agent-other" },
+        clock,
+      ),
+      deps,
+    );
+    expect((result.data as unknown[]).length).toBe(0);
+  });
+
+  it("GET returns FORBIDDEN (not NOT_FOUND) for a row the actor may not read", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-other",
+      processorId: "",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken } = addSession(store, agent);
+    expect(() =>
+      executeCrud(
+        "applications_get",
+        envelope(
+          "applications_get",
+          { session_token: sessionToken, application_id: "a1" },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
+  });
+
+  it("returns CrudNotFoundError for a nonexistent application_id on get", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    const admin = addUser(store, { role: "Admin" });
+    const { sessionToken } = addSession(store, admin);
+    expect(() =>
+      executeCrud(
+        "applications_get",
+        envelope(
+          "applications_get",
+          { session_token: sessionToken, application_id: "missing" },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudNotFoundError);
+  });
+
+  it("Agent creates an application; agent_id is always session-derived, never client-supplied", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken, csrfToken } = addSession(store, agent);
+    const result = executeCrud(
+      "applications_create",
+      envelope(
+        "applications_create",
+        {
+          session_token: sessionToken,
+          csrf_token: csrfToken,
+          customer_full_name: "Juan Dela Cruz",
+          mobile_number: "09171234567",
+          complete_address: "123 Rizal St",
+          barangay: "Barangay 1",
+          city_municipality: "Quezon City",
+          province: "Metro Manila",
+          plan_id: "plan-1",
+          agent_id: "someone-else",
+        },
+        clock,
+      ),
+      deps,
+    );
+    expect(result.data).toMatchObject({
+      agentId: "agent-1",
+      currentStatus: "Pending",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      version: 1,
+    });
+    const statusRows = deps.statusHistorySheet.rows;
+    expect(statusRows).toHaveLength(1);
+    expect(statusRows[0][2]).toBe("");
+    expect(statusRows[0][3]).toBe("Pending");
+  });
+
+  it("Admin creating an application requires an explicit agent_id referencing an existing Agent user", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    seedUserRow(deps.usersSheet, { userId: "agent-1", role: "Agent" });
+    const admin = addUser(store, { role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin);
+    const result = executeCrud(
+      "applications_create",
+      envelope(
+        "applications_create",
+        {
+          session_token: sessionToken,
+          csrf_token: csrfToken,
+          customer_full_name: "Juan Dela Cruz",
+          mobile_number: "09171234567",
+          complete_address: "123 Rizal St",
+          barangay: "Barangay 1",
+          city_municipality: "Quezon City",
+          province: "Metro Manila",
+          plan_id: "plan-1",
+          agent_id: "agent-1",
+        },
+        clock,
+      ),
+      deps,
+    );
+    expect(result.data).toMatchObject({ agentId: "agent-1" });
+
+    expect(() =>
+      executeCrud(
+        "applications_create",
+        envelope(
+          "applications_create",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            customer_full_name: "Juan Dela Cruz",
+            mobile_number: "09171234567",
+            complete_address: "123 Rizal St",
+            barangay: "Barangay 1",
+            city_municipality: "Quezon City",
+            province: "Metro Manila",
+            plan_id: "plan-1",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudValidationError);
+  });
+
+  it("rejects Processor creating an application with FORBIDDEN", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    const processor = addUser(store, { role: "Processor" });
+    const { sessionToken, csrfToken } = addSession(store, processor);
+    expect(() =>
+      executeCrud(
+        "applications_create",
+        envelope(
+          "applications_create",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            customer_full_name: "Juan Dela Cruz",
+            mobile_number: "09171234567",
+            complete_address: "123 Rizal St",
+            barangay: "Barangay 1",
+            city_municipality: "Quezon City",
+            province: "Metro Manila",
+            plan_id: "plan-1",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
+  });
+
+  it("rejects plan_id referencing an Inactive plan with CrudValidationError", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps, { planId: "plan-2", planStatus: "Inactive" });
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken, csrfToken } = addSession(store, agent);
+    expect(() =>
+      executeCrud(
+        "applications_create",
+        envelope(
+          "applications_create",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            customer_full_name: "Juan Dela Cruz",
+            mobile_number: "09171234567",
+            complete_address: "123 Rizal St",
+            barangay: "Barangay 1",
+            city_municipality: "Quezon City",
+            province: "Metro Manila",
+            plan_id: "plan-2",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudValidationError);
+  });
+
+  it("Agent can edit core fields on their own Pending application", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Old Name",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken, csrfToken } = addSession(store, agent);
+    const result = executeCrud(
+      "applications_update",
+      envelope(
+        "applications_update",
+        {
+          session_token: sessionToken,
+          csrf_token: csrfToken,
+          application_id: "a1",
+          version: 1,
+          customer_full_name: "New Name",
+        },
+        clock,
+      ),
+      deps,
+    );
+    expect(result.data).toMatchObject({
+      applicationId: "a1",
+      customerFullName: "New Name",
+      version: 2,
+    });
+  });
+
+  it("rejects an Agent editing another agent's application with FORBIDDEN", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Old Name",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-other",
+      processorId: "",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken, csrfToken } = addSession(store, agent);
+    expect(() =>
+      executeCrud(
+        "applications_update",
+        envelope(
+          "applications_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            application_id: "a1",
+            version: 1,
+            customer_full_name: "New Name",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
+  });
+
+  it("rejects an Agent editing their own application once it is no longer Pending", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Old Name",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "",
+      currentStatus: "Transmitted",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken, csrfToken } = addSession(store, agent);
+    expect(() =>
+      executeCrud(
+        "applications_update",
+        envelope(
+          "applications_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            application_id: "a1",
+            version: 1,
+            customer_full_name: "New Name",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
+  });
+
+  it("Processor performs an allowed status transition on their assigned application, with a Status_History row", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "proc-1",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const processor = addUser(store, { userId: "proc-1", role: "Processor" });
+    const { sessionToken, csrfToken } = addSession(store, processor);
+    const result = executeCrud(
+      "applications_update",
+      envelope(
+        "applications_update",
+        {
+          session_token: sessionToken,
+          csrf_token: csrfToken,
+          application_id: "a1",
+          version: 1,
+          current_status: "Transmitted",
+        },
+        clock,
+      ),
+      deps,
+    );
+    expect(result.data).toMatchObject({
+      applicationId: "a1",
+      currentStatus: "Transmitted",
+      version: 2,
+    });
+    const statusRows = deps.statusHistorySheet.rows;
+    expect(statusRows).toHaveLength(1);
+    expect(statusRows[0][2]).toBe("Pending");
+    expect(statusRows[0][3]).toBe("Transmitted");
+    const activityRows = deps.activityLogSheet.rows;
+    expect(activityRows).toHaveLength(1);
+    expect(activityRows[0][2]).toBe("APPLICATION_STATUS_CHANGE");
+  });
+
+  it("rejects a Processor transition on an application not assigned to them", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "proc-other",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const processor = addUser(store, { userId: "proc-1", role: "Processor" });
+    const { sessionToken, csrfToken } = addSession(store, processor);
+    expect(() =>
+      executeCrud(
+        "applications_update",
+        envelope(
+          "applications_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            application_id: "a1",
+            version: 1,
+            current_status: "Transmitted",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
+  });
+
+  it("rejects an invalid status transition via validateTransition (frozen policy)", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "proc-1",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const processor = addUser(store, { userId: "proc-1", role: "Processor" });
+    const { sessionToken, csrfToken } = addSession(store, processor);
+    expect(() =>
+      executeCrud(
+        "applications_update",
+        envelope(
+          "applications_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            application_id: "a1",
+            version: 1,
+            current_status: "Installed",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudValidationError);
+  });
+
+  it("requires job_order_number for With Job Order", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "proc-1",
+      currentStatus: "Transmitted",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const processor = addUser(store, { userId: "proc-1", role: "Processor" });
+    const { sessionToken, csrfToken } = addSession(store, processor);
+    expect(() =>
+      executeCrud(
+        "applications_update",
+        envelope(
+          "applications_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            application_id: "a1",
+            version: 1,
+            current_status: "With Job Order",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudValidationError);
+  });
+
+  it("rejects a stale version with CrudConflictError (assertCurrentVersion)", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "proc-1",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const processor = addUser(store, { userId: "proc-1", role: "Processor" });
+    const { sessionToken, csrfToken } = addSession(store, processor);
+    expect(() =>
+      executeCrud(
+        "applications_update",
+        envelope(
+          "applications_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            application_id: "a1",
+            version: 2,
+            current_status: "Transmitted",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudConflictError);
+  });
+
+  it("Admin assigns a Processor; rejects assigning a non-Processor or inactive Processor", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    seedUserRow(deps.usersSheet, {
+      userId: "proc-1",
+      role: "Processor",
+      accountStatus: "Active",
+    });
+    seedUserRow(deps.usersSheet, {
+      userId: "agent-1",
+      role: "Agent",
+      accountStatus: "Active",
+    });
+    seedUserRow(deps.usersSheet, {
+      userId: "proc-inactive",
+      role: "Processor",
+      accountStatus: "Inactive",
+    });
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const admin = addUser(store, { role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin);
+    const result = executeCrud(
+      "applications_assign",
+      envelope(
+        "applications_assign",
+        {
+          session_token: sessionToken,
+          csrf_token: csrfToken,
+          application_id: "a1",
+          version: 1,
+          processor_id: "proc-1",
+        },
+        clock,
+      ),
+      deps,
+    );
+    expect(result.data).toMatchObject({
+      applicationId: "a1",
+      processorId: "proc-1",
+    });
+
+    expect(() =>
+      executeCrud(
+        "applications_assign",
+        envelope(
+          "applications_assign",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            application_id: "a1",
+            version: 2,
+            processor_id: "agent-1",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudValidationError);
+
+    expect(() =>
+      executeCrud(
+        "applications_assign",
+        envelope(
+          "applications_assign",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            application_id: "a1",
+            version: 2,
+            processor_id: "proc-inactive",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudValidationError);
+  });
+
+  it("rejects a non-Admin assigning a Processor with FORBIDDEN", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    seedUserRow(deps.usersSheet, { userId: "proc-1", role: "Processor" });
+    deps.applicationsRepository.create({
+      applicationId: "a1",
+      customerFullName: "Customer A",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr A",
+      barangay: "Brgy A",
+      cityMunicipality: "City A",
+      province: "Province A",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: "agent-1",
+      processorId: "",
+      currentStatus: "Pending",
+      jobOrderNumber: "",
+      submittedAt: "2026-09-14T00:00:00.000Z",
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: "2026-09-14T00:00:00.000Z",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+    });
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken, csrfToken } = addSession(store, agent);
+    expect(() =>
+      executeCrud(
+        "applications_assign",
+        envelope(
+          "applications_assign",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            application_id: "a1",
+            version: 1,
+            processor_id: "proc-1",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
   });
 });

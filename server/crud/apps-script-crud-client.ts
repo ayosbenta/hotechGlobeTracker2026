@@ -6,7 +6,12 @@ export type CrudOperation =
   | "plans_create"
   | "plans_update"
   | "users_list"
-  | "users_update";
+  | "users_update"
+  | "applications_list"
+  | "applications_get"
+  | "applications_create"
+  | "applications_update"
+  | "applications_assign";
 
 const OPERATION_PATHS: Record<CrudOperation, { method: "POST"; path: string }> =
   {
@@ -15,6 +20,26 @@ const OPERATION_PATHS: Record<CrudOperation, { method: "POST"; path: string }> =
     plans_update: { method: "POST", path: "/internal/v1/crud/plans/update" },
     users_list: { method: "POST", path: "/internal/v1/crud/users/list" },
     users_update: { method: "POST", path: "/internal/v1/crud/users/update" },
+    applications_list: {
+      method: "POST",
+      path: "/internal/v1/crud/applications/list",
+    },
+    applications_get: {
+      method: "POST",
+      path: "/internal/v1/crud/applications/get",
+    },
+    applications_create: {
+      method: "POST",
+      path: "/internal/v1/crud/applications/create",
+    },
+    applications_update: {
+      method: "POST",
+      path: "/internal/v1/crud/applications/update",
+    },
+    applications_assign: {
+      method: "POST",
+      path: "/internal/v1/crud/applications/assign",
+    },
   };
 
 export interface AppsScriptCrudResult {

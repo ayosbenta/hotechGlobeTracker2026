@@ -82,7 +82,7 @@ export interface ApplicationVersionSnapshot {
 }
 
 /**
- * The only HTTP-reachable CRUD operations for MVP-2A/2B. An explicit
+ * The only HTTP-reachable CRUD operations for MVP-2A/2B/2C. An explicit
  * allowlist, mirroring auth-domain.ts's Operation union — never a
  * dynamic/caller-keyed dispatch. Extended (not replaced) as later MVP-2
  * batches add entities.
@@ -92,7 +92,12 @@ export type CrudOperation =
   | "plans_create"
   | "plans_update"
   | "users_list"
-  | "users_update";
+  | "users_update"
+  | "applications_list"
+  | "applications_get"
+  | "applications_create"
+  | "applications_update"
+  | "applications_assign";
 
 export type PlanStatus = "Active" | "Inactive";
 
@@ -129,6 +134,38 @@ export interface UserRecord {
   mobileNumber: string;
   role: UserRole;
   accountStatus: UserAccountStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * The frozen Phase 02 `Applications` schema (apps-script/core/schema.ts,
+ * 22 columns). Applications DO have a `version` column, so mutations use
+ * `versioning.ts`'s frozen `assertCurrentVersion` unchanged — never the
+ * `updatedAt`-token pattern reserved for version-less entities (Plans,
+ * Users).
+ */
+export interface ApplicationRecord {
+  applicationId: string;
+  customerFullName: string;
+  mobileNumber: string;
+  email: string;
+  completeAddress: string;
+  barangay: string;
+  cityMunicipality: string;
+  province: string;
+  landmark: string;
+  planId: string;
+  planNameSnapshot: string;
+  monthlyPriceSnapshot: number;
+  agentId: string;
+  processorId: string;
+  currentStatus: ApplicationStatus;
+  jobOrderNumber: string;
+  submittedAt: string;
+  installedAt: string;
+  notes: string;
+  version: number;
   createdAt: string;
   updatedAt: string;
 }

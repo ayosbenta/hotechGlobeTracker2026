@@ -1,4 +1,4 @@
-# Next Task — MVP-2: Core Tracker CRUD (MVP-2A/2B implemented, MVP-2C–2F not started)
+# Next Task — MVP-2: Core Tracker CRUD (MVP-2A/2B/2C/2D/2E implemented, MVP-2F not started)
 
 Roadmap reference: **`docs/MVP_COMPLETION_PLAN.md`** — Owner Approved (2026-09-15), along with
 decisions D-035/D-036.
@@ -8,10 +8,10 @@ versioning, status-transition matrix, audit primitives — see `apps-script/core
 `versioning.ts`, `lock.ts`, `audit.ts`, `status-transitions.ts`), and the frozen Phase 03A/03B/03C1
 authentication chain MVP-1 now fronts.
 
-Status: **MVP-2A and MVP-2B implemented locally as checkpoint commits (2026-09-16); not Owner
-Approved.** MVP-2C–2F remain planning-only. See "MVP-2 — Core Tracker CRUD (planned)" below for the
-full specification, and "MVP-2A result (2026-09-16)"/"MVP-2B result (2026-09-16)" for what was
-actually built and verified.
+Status: **MVP-2A, MVP-2B, and MVP-2C (which also completes MVP-2D/2E per D-043) implemented locally
+as checkpoint commits (2026-09-16); not Owner Approved.** MVP-2F remains planning-only. See
+"MVP-2 — Core Tracker CRUD (planned)" below for the full specification, and "MVP-2A/2B/2C result"
+sections for what was actually built and verified.
 
 ## Roadmap change (2026-09-15, Owner Approved)
 
@@ -61,9 +61,9 @@ proven once (MVP-2A) before being repeated across the remaining entity/role surf
 | --- | --- | --- | --- |
 | MVP-2A | Shared contracts, Apps Script repository layer, Admin Plans CRUD | MVP-1 (auth ingress pattern) | **Implemented locally, checkpoint commit. Not Owner Approved.** |
 | MVP-2B | Admin Users/role assignments and account-status management | MVP-2A (repository layer) | **Implemented locally, checkpoint commit. Not Owner Approved.** |
-| MVP-2C | Applications create/read/update foundation | MVP-2A, MVP-2B (agent/processor assignment needs Users) | Not started |
-| MVP-2D | Agent own-application workflow (create, view own) | MVP-2C | Not started |
-| MVP-2E | Processor queue/assignment/status transitions | MVP-2C, MVP-2D | Not started |
+| MVP-2C | Applications create/read/update foundation | MVP-2A, MVP-2B (agent/processor assignment needs Users) | **Implemented locally, checkpoint commit. Not Owner Approved.** |
+| MVP-2D | Agent own-application workflow (create, view own) | MVP-2C | **Folded into MVP-2C's implementation (D-043) — full RBAC was built from the start.** |
+| MVP-2E | Processor queue/assignment/status transitions | MVP-2C, MVP-2D | **Folded into MVP-2C's implementation (D-043) — full RBAC was built from the start.** |
 | MVP-2F | Integration verification, audits, and regression across 2A–2E | MVP-2A..2E | Not started |
 
 ### MVP-2A result (2026-09-16)
@@ -180,6 +180,66 @@ Vercel Preview was used; that remains MVP-4. `users_update`'s allowed-fields set
 (role, account_status, full_name, mobile_number); no separate Users-create endpoint was added
 (Users remain pre-provisioned per the frozen Phase 03A first-bind flow, unchanged by this batch).
 MVP-2B does not implement Applications or any other MVP-2C–2F scope.
+
+### MVP-2C/2D/2E result (2026-09-16)
+
+Implemented and locally verified together as one checkpoint commit (not Owner Approved — see
+D-039/D-043), since a single `ApplicationsRepository` and a single set of `crud-domain.ts` handlers
+implement the full §B-§D role RBAC matrix from the start, so MVP-2D/2E added no separate
+implementation pass. Summary:
+
+- `apps-script/core/contracts.ts`: extended `CrudOperation` with `applications_list`/`_get`/
+  `_create`/`_update`/`_assign`, and added `ApplicationRecord` (22 fields matching the frozen
+  schema).
+- `apps-script/core/applications-repository.ts` (new): header-addressed `ApplicationsRepository`
+  (list with agentId/processorId/currentStatus filters, findById, create, update), following
+  `PlansRepository`'s shape.
+- `apps-script/core/crud-domain.ts`: extended with `listApplications` (Admin sees all with optional
+  filters; Agent forced to their own `agentId`; Processor forced to their own `processorId` — a
+  client-supplied `agent_id`/`processor_id` filter is never trusted as authorization for a
+  non-Admin, confirmed by a dedicated test), `getApplication` (role-scoped read, `FORBIDDEN` — never
+  `NOT_FOUND` — for a row the actor may not read), `createApplication` (Admin/Agent only; an Agent's
+  `agent_id` is always session-derived; an Admin must supply an explicit `agent_id` validated to
+  reference an existing Agent-role user; `plan_id` must reference an existing Active Plan, whose
+  name/price are snapshotted at write time; `current_status` always starts `Pending` server-side;
+  one `Status_History` row is appended alongside the `Activity_Logs` row), `updateApplication`
+  (Admin may edit core fields and/or trigger a transition; Agent may edit core fields only on their
+  own `Pending` application; Processor may only trigger a transition on their assigned application,
+  via the frozen `validateTransition` called unchanged, with assigned-only authorization checked
+  before it), and `assignApplication` (Admin-only, validates the target is an existing
+  `role=Processor`/`accountStatus=Active` user).
+- Applications use the frozen `assertCurrentVersion`/`version` column (not the `updated_at`-token
+  pattern) since the schema has a real `version` column — a stale version throws
+  `CrudConflictError` → `CONFLICT`.
+- `apps-script/core/crud-ingress.ts`: `ALLOWED_OPERATIONS` extended with the five `applications_*`
+  operations — no new route.
+- `apps-script/Code.ts`: `executeCrudPhase2A` now also constructs an `ApplicationsRepository` over
+  the `Applications` sheet and a `Status_History` sheet reference, passed into `executeCrud`.
+- BFF: `server/crud/routes/applications.ts` (`handleListApplicationsRoute`,
+  `handleGetApplicationRoute`, `handleCreateApplicationRoute`, `handleUpdateApplicationRoute`,
+  `handleAssignApplicationRoute`) and `api/applications/index.ts`,
+  `api/applications/[applicationId].ts`, `api/applications/[applicationId]/assign.ts`, mirroring
+  the Plans/Users route files exactly. `applications-read`/`applications-write` rate-limit buckets
+  were added to `server/auth/rate-limit.ts`.
+- No frontend/dashboard file was touched; `DashboardShell` navigation remains inert, per §K.
+- No shared Processor claim queue was implemented — Processor assignment remains Admin-only,
+  consistent with that item remaining an explicit open decision in `docs/DECISIONS.md`.
+
+**Verification (local; no live external resource used):** 139/139 Apps Script tests (was 118, +21:
+4 ApplicationsRepository, 17 CRUD-domain Applications cases covering RBAC scoping, ownership
+enforcement, Pending-only Agent edits, Processor-assigned-only transitions, frozen-transition-graph
+validation, job-order-number requirement, stale-version conflict, and Admin-only assignment with
+Processor-role/Active-status validation), 390/390 total unit tests (was 342, +48: the 21 above + 27
+new BFF applications-route tests), `npm run format`/`format:check`, `npm run lint` (0 errors, same
+one pre-existing warning), `npm run typecheck`, `npm run gas:build`/`gas:check` (both pass unchanged
+— no new route was added), `npm run build` (production bundle scanned clean of secrets),
+`npx playwright test` (19/19 unchanged), a credential/secret grep over the diff (clean), and
+`git diff --check` (clean, only benign CRLF-conversion warnings). Committed locally (not pushed) as
+`feat(mvp-2c): implement applications crud foundation`.
+
+**Known limitations:** local/mocked only — no live Apps Script deployment, live Google/Upstash, or
+Vercel Preview was used; that remains MVP-4. No Attachments/uploads were implemented (deferred
+post-MVP per the roadmap). MVP-2F (integration verification across 2A-2E) remains not started.
 
 Each batch ends in a working, independently testable slice; none is implemented until explicitly
 instructed, batch by batch.
@@ -745,9 +805,9 @@ passes. Old Phase 03C2 is superseded by MVP-1 and old Phase 03D by MVP-4.
   login/dashboard-auth UI changes require an explicit owner change request.
 - **Phase 03C1A: Ready for Owner Review** (unchanged; committed locally, not pushed). Live
   acceptance deferred to MVP-4.
-- **MVP-2 — Core Tracker CRUD: MVP-2A implemented locally (checkpoint commit, not Owner
-  Approved), MVP-2B–2F not started.** Split into MVP-2A–2F (see above); full
-  route/RBAC/transition/validation/concurrency/audit/pagination/error/test specification is
-  recorded above. MVP-2A (shared `CrudOperation` contracts, `PlansRepository`, the internal-CRUD
-  ingress, and Admin Plans CRUD) is committed locally (not pushed) as
-  `feat(mvp-2a): implement plans crud foundation`.
+- **MVP-2 — Core Tracker CRUD: MVP-2A/2B/2C implemented locally (checkpoint commits, not Owner
+  Approved); MVP-2D/2E folded into MVP-2C (D-043); MVP-2F not started.** Split into MVP-2A–2F (see
+  above); full route/RBAC/transition/validation/concurrency/audit/pagination/error/test
+  specification is recorded above. Committed locally (not pushed) as
+  `feat(mvp-2a): implement plans crud foundation`, `feat(mvp-2b): implement user administration`,
+  and `feat(mvp-2c): implement applications crud foundation`.

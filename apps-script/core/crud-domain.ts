@@ -8,6 +8,7 @@ import {
 import { verifyEnvelope, type InternalEnvelope } from "./auth-envelope";
 import type { CryptoAdapter } from "./auth-crypto";
 import type {
+  ApplicationRecord,
   Clock,
   CrudOperation,
   PlanRecord,
@@ -16,6 +17,13 @@ import type {
   UserRole,
   UuidGenerator,
 } from "./contracts";
+import {
+  isApplicationStatus,
+  stripApplicationRow,
+  type ApplicationRecordWithRow,
+  type ApplicationsRepository,
+  type UpdateApplicationChanges,
+} from "./applications-repository";
 import {
   isPlanStatus,
   type PlanRecordWithRow,
@@ -29,6 +37,8 @@ import {
 } from "./users-repository";
 import { withScriptLock, type LockServiceAdapter } from "./lock";
 import { appendActivityLog } from "./audit";
+import { validateTransition } from "./status-transitions";
+import { assertCurrentVersion, StaleVersionError } from "./versioning";
 import type { SpreadsheetSheet } from "./schema";
 
 export class CrudValidationError extends Error {
@@ -79,6 +89,26 @@ const OPERATION_CONTRACTS: Record<
   plans_update: { method: "POST", path: "/internal/v1/crud/plans/update" },
   users_list: { method: "POST", path: "/internal/v1/crud/users/list" },
   users_update: { method: "POST", path: "/internal/v1/crud/users/update" },
+  applications_list: {
+    method: "POST",
+    path: "/internal/v1/crud/applications/list",
+  },
+  applications_get: {
+    method: "POST",
+    path: "/internal/v1/crud/applications/get",
+  },
+  applications_create: {
+    method: "POST",
+    path: "/internal/v1/crud/applications/create",
+  },
+  applications_update: {
+    method: "POST",
+    path: "/internal/v1/crud/applications/update",
+  },
+  applications_assign: {
+    method: "POST",
+    path: "/internal/v1/crud/applications/assign",
+  },
 };
 
 export interface CrudAuthDependencies {
@@ -97,11 +127,15 @@ export interface CrudDependencies extends CrudAuthDependencies {
   lock: CrudLock;
   plansRepository: PlansRepository;
   usersRepository: UsersRepository;
+  applicationsRepository: ApplicationsRepository;
   activityLogSheet: SpreadsheetSheet;
+  statusHistorySheet: SpreadsheetSheet;
 }
 
 const MAX_PAGE_SIZE = 50;
 const DEFAULT_PAGE_SIZE = 25;
+
+type Actor = { userId: string; role: "Admin" | "Agent" | "Processor" };
 
 function toAuthDeps(deps: CrudDependencies): AuthDomainDependencies {
   return {
@@ -124,6 +158,16 @@ function requiredString(
     value.trim() === "" ||
     value.length > maxLength
   )
+    throw new CrudValidationError(`Invalid value for ${field}.`);
+  return value.trim();
+}
+
+function optionalTrimmedString(
+  value: unknown,
+  field: string,
+  maxLength: number,
+): string {
+  if (typeof value !== "string" || value.length > maxLength)
     throw new CrudValidationError(`Invalid value for ${field}.`);
   return value.trim();
 }
@@ -202,9 +246,9 @@ export interface CrudResult {
  * Internal-only CRUD dispatcher, mirroring executeInternalAuth's shape:
  * verifies the signed envelope, requires a valid session for every
  * operation, derives the authoritative actor from that session (never a
- * client claim), and performs the requested Plans operation under the
- * frozen script lock with an audit row. Not called by doGet/doPost directly
- * — only through the crud-ingress allowlist.
+ * client claim), and performs the requested operation under the frozen
+ * script lock with an audit row. Not called by doGet/doPost directly —
+ * only through the crud-ingress allowlist.
  */
 export function executeCrud(
   operation: CrudOperation,
@@ -231,6 +275,12 @@ export function executeCrud(
     if (operation === "users_list") {
       return listUsers(actor.role, payload, deps);
     }
+    if (operation === "applications_list") {
+      return listApplications(actor, payload, deps);
+    }
+    if (operation === "applications_get") {
+      return getApplication(actor, payload, deps);
+    }
 
     // Every mutation additionally requires CSRF double-submit.
     requireSessionCsrf(authDeps, sessionToken, payload.csrf_token);
@@ -243,6 +293,15 @@ export function executeCrud(
     }
     if (operation === "users_update") {
       return updateUser(actor, payload, deps, verified.envelope);
+    }
+    if (operation === "applications_create") {
+      return createApplication(actor, payload, deps, verified.envelope);
+    }
+    if (operation === "applications_update") {
+      return updateApplication(actor, payload, deps, verified.envelope);
+    }
+    if (operation === "applications_assign") {
+      return assignApplication(actor, payload, deps, verified.envelope);
     }
     throw new CrudValidationError();
   });
@@ -267,7 +326,7 @@ function listPlans(
 }
 
 function createPlan(
-  actor: { userId: string; role: "Admin" | "Agent" | "Processor" },
+  actor: Actor,
   payload: Record<string, unknown>,
   deps: CrudDependencies,
   envelope: InternalEnvelope,
@@ -309,7 +368,7 @@ function createPlan(
 }
 
 function updatePlan(
-  actor: { userId: string; role: "Admin" | "Agent" | "Processor" },
+  actor: Actor,
   payload: Record<string, unknown>,
   deps: CrudDependencies,
   envelope: InternalEnvelope,
@@ -393,7 +452,7 @@ function listUsers(
  * row) may reduce the count of remaining active Admins to zero.
  */
 function updateUser(
-  actor: { userId: string; role: "Admin" | "Agent" | "Processor" },
+  actor: Actor,
   payload: Record<string, unknown>,
   deps: CrudDependencies,
   envelope: InternalEnvelope,
@@ -476,6 +535,484 @@ function updateUser(
         changedFields: Object.keys(changes).filter((k) => k !== "updatedAt"),
         self: isSelf,
       },
+    },
+    deps.clock,
+    deps.ids,
+  );
+  return { data: updated, nextCursor: null };
+}
+
+// ---------------------------------------------------------------------------
+// MVP-2C/2D/2E — Applications
+// ---------------------------------------------------------------------------
+
+function appendStatusHistory(
+  deps: CrudDependencies,
+  input: {
+    applicationId: string;
+    fromStatus: string;
+    toStatus: string;
+    notes: string;
+    jobOrderNumber: string;
+    actorUserId: string;
+    requestId: string;
+  },
+): void {
+  deps.statusHistorySheet.appendRow([
+    deps.ids.generate(),
+    input.applicationId,
+    input.fromStatus,
+    input.toStatus,
+    input.notes,
+    input.jobOrderNumber,
+    input.actorUserId,
+    input.requestId,
+    deps.clock.now().toISOString(),
+  ]);
+}
+
+/** Row-level read authorization: Admin any; Agent own; Processor assigned. */
+function mayReadApplication(actor: Actor, record: ApplicationRecord): boolean {
+  if (actor.role === "Admin") return true;
+  if (actor.role === "Agent") return record.agentId === actor.userId;
+  return record.processorId === actor.userId;
+}
+
+function listApplications(
+  actor: Actor,
+  payload: Record<string, unknown>,
+  deps: CrudDependencies,
+): CrudResult {
+  const filter: {
+    agentId?: string;
+    processorId?: string;
+    currentStatus?: ApplicationRecord["currentStatus"];
+  } = {};
+  if (actor.role === "Admin") {
+    if (typeof payload.agent_id === "string") filter.agentId = payload.agent_id;
+    if (typeof payload.processor_id === "string")
+      filter.processorId = payload.processor_id;
+  } else if (actor.role === "Agent") {
+    // Never trust a client-supplied agent_id filter as authorization.
+    filter.agentId = actor.userId;
+  } else {
+    filter.processorId = actor.userId;
+  }
+  if (payload.current_status !== undefined) {
+    if (!isApplicationStatus(payload.current_status))
+      throw new CrudValidationError("Invalid current_status.");
+    filter.currentStatus = payload.current_status;
+  }
+  const all = deps.applicationsRepository.list(filter);
+  const { page, nextCursor } = paginate(all, payload.cursor, payload.limit);
+  return { data: page, nextCursor };
+}
+
+function getApplication(
+  actor: Actor,
+  payload: Record<string, unknown>,
+  deps: CrudDependencies,
+): CrudResult {
+  const applicationId = requiredString(
+    payload.application_id,
+    "application_id",
+    200,
+  );
+  const existing = deps.applicationsRepository.findById(applicationId);
+  if (existing === null) throw new CrudNotFoundError();
+  // FORBIDDEN is used uniformly for "wrong role" and "not your row" to avoid
+  // disclosing whether the row exists to an unauthorized caller.
+  if (!mayReadApplication(actor, existing)) throw new CrudForbiddenError();
+  return { data: stripApplicationRow(existing), nextCursor: null };
+}
+
+function createApplication(
+  actor: Actor,
+  payload: Record<string, unknown>,
+  deps: CrudDependencies,
+  envelope: InternalEnvelope,
+): CrudResult {
+  if (actor.role !== "Admin" && actor.role !== "Agent")
+    throw new CrudForbiddenError();
+
+  const customerFullName = requiredString(
+    payload.customer_full_name,
+    "customer_full_name",
+    200,
+  );
+  const mobileNumber = requiredMobileNumber(payload.mobile_number);
+  const email = optionalTrimmedString(payload.email ?? "", "email", 200);
+  const completeAddress = requiredString(
+    payload.complete_address,
+    "complete_address",
+    400,
+  );
+  const barangay = requiredString(payload.barangay, "barangay", 120);
+  const cityMunicipality = requiredString(
+    payload.city_municipality,
+    "city_municipality",
+    120,
+  );
+  const province = requiredString(payload.province, "province", 120);
+  const landmark = optionalTrimmedString(
+    payload.landmark ?? "",
+    "landmark",
+    200,
+  );
+  const planId = requiredString(payload.plan_id, "plan_id", 200);
+
+  const plan = deps.plansRepository.findById(planId);
+  if (plan === null || plan.planStatus !== "Active")
+    throw new CrudValidationError(
+      "plan_id must reference an existing Active plan.",
+    );
+
+  // agent_id is NEVER client-trusted: an Agent's own id is always
+  // session-derived (MVP-2D). An Admin creating on behalf of someone must
+  // supply an explicit agent_id that references an existing Agent-role user
+  // (a conservative choice — see D-043).
+  let agentId: string;
+  if (actor.role === "Agent") {
+    agentId = actor.userId;
+  } else {
+    const requestedAgentId = requiredString(payload.agent_id, "agent_id", 200);
+    const agentUser = deps.usersRepository.findById(requestedAgentId);
+    if (agentUser === null || agentUser.role !== "Agent")
+      throw new CrudValidationError(
+        "agent_id must reference an existing Agent user.",
+      );
+    agentId = requestedAgentId;
+  }
+
+  const now = deps.clock.now().toISOString();
+  const applicationId = deps.ids.generate();
+  const record: ApplicationRecord = {
+    applicationId,
+    customerFullName,
+    mobileNumber,
+    email,
+    completeAddress,
+    barangay,
+    cityMunicipality,
+    province,
+    landmark,
+    planId,
+    planNameSnapshot: plan.planName,
+    monthlyPriceSnapshot: plan.monthlyPrice,
+    agentId,
+    processorId: "",
+    currentStatus: "Pending",
+    jobOrderNumber: "",
+    submittedAt: now,
+    installedAt: "",
+    notes:
+      typeof payload.notes === "string"
+        ? optionalTrimmedString(payload.notes, "notes", 2000)
+        : "",
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+  deps.applicationsRepository.create(record);
+
+  appendActivityLog(
+    deps.activityLogSheet,
+    {
+      actorUserId: actor.userId,
+      action: "APPLICATION_CREATE",
+      entityType: "Application",
+      entityId: applicationId,
+      requestId: envelope.jti,
+      metadata: { agentId, planId },
+    },
+    deps.clock,
+    deps.ids,
+  );
+  appendStatusHistory(deps, {
+    applicationId,
+    fromStatus: "",
+    toStatus: "Pending",
+    notes: "",
+    jobOrderNumber: "",
+    actorUserId: actor.userId,
+    requestId: envelope.jti,
+  });
+
+  return { data: record, nextCursor: null };
+}
+
+/** Non-status core fields an Agent may edit on their own Pending application. */
+const AGENT_EDITABLE_FIELDS = [
+  "customer_full_name",
+  "mobile_number",
+  "email",
+  "complete_address",
+  "barangay",
+  "city_municipality",
+  "province",
+  "landmark",
+  "plan_id",
+  "notes",
+] as const;
+
+function updateApplication(
+  actor: Actor,
+  payload: Record<string, unknown>,
+  deps: CrudDependencies,
+  envelope: InternalEnvelope,
+): CrudResult {
+  const applicationId = requiredString(
+    payload.application_id,
+    "application_id",
+    200,
+  );
+  const expectedVersion = payload.version;
+  if (typeof expectedVersion !== "number")
+    throw new CrudValidationError("Invalid value for version.");
+
+  const existing = deps.applicationsRepository.findById(applicationId);
+  if (existing === null) throw new CrudNotFoundError();
+
+  const wantsStatusChange = payload.current_status !== undefined;
+  const coreFieldKeys = AGENT_EDITABLE_FIELDS.filter(
+    (key) => payload[key] !== undefined,
+  );
+
+  if (actor.role === "Admin") {
+    // Admin may edit core fields and/or reassign agent_id; status changes go
+    // through the same transition authority as Processor per §C.
+  } else if (actor.role === "Agent") {
+    if (existing.agentId !== actor.userId) throw new CrudForbiddenError();
+    if (existing.currentStatus !== "Pending") throw new CrudForbiddenError();
+    if (wantsStatusChange || payload.agent_id !== undefined)
+      throw new CrudForbiddenError();
+  } else {
+    // Processor: only status transitions on their assigned application,
+    // never core/customer fields, never agent/processor reassignment.
+    if (existing.processorId !== actor.userId) throw new CrudForbiddenError();
+    if (coreFieldKeys.length > 0 || payload.agent_id !== undefined)
+      throw new CrudForbiddenError();
+    if (!wantsStatusChange) throw new CrudValidationError();
+  }
+
+  let newVersion: number;
+  try {
+    newVersion = assertCurrentVersion(
+      { applicationId, version: existing.version },
+      expectedVersion,
+    );
+  } catch (error) {
+    if (error instanceof StaleVersionError) throw new CrudConflictError();
+    throw error;
+  }
+
+  const changes: UpdateApplicationChanges = {
+    version: newVersion,
+    updatedAt: deps.clock.now().toISOString(),
+  };
+
+  let planNameSnapshot: string | undefined;
+  let monthlyPriceSnapshot: number | undefined;
+  if (payload.plan_id !== undefined) {
+    const nextPlanId = requiredString(payload.plan_id, "plan_id", 200);
+    const plan = deps.plansRepository.findById(nextPlanId);
+    if (plan === null || plan.planStatus !== "Active")
+      throw new CrudValidationError(
+        "plan_id must reference an existing Active plan.",
+      );
+    changes.planId = nextPlanId;
+    planNameSnapshot = plan.planName;
+    monthlyPriceSnapshot = plan.monthlyPrice;
+    changes.planNameSnapshot = plan.planName;
+    changes.monthlyPriceSnapshot = plan.monthlyPrice;
+  }
+  if (payload.customer_full_name !== undefined)
+    changes.customerFullName = requiredString(
+      payload.customer_full_name,
+      "customer_full_name",
+      200,
+    );
+  if (payload.mobile_number !== undefined)
+    changes.mobileNumber = requiredMobileNumber(payload.mobile_number);
+  if (payload.email !== undefined)
+    changes.email = optionalTrimmedString(payload.email, "email", 200);
+  if (payload.complete_address !== undefined)
+    changes.completeAddress = requiredString(
+      payload.complete_address,
+      "complete_address",
+      400,
+    );
+  if (payload.barangay !== undefined)
+    changes.barangay = requiredString(payload.barangay, "barangay", 120);
+  if (payload.city_municipality !== undefined)
+    changes.cityMunicipality = requiredString(
+      payload.city_municipality,
+      "city_municipality",
+      120,
+    );
+  if (payload.province !== undefined)
+    changes.province = requiredString(payload.province, "province", 120);
+  if (payload.landmark !== undefined)
+    changes.landmark = optionalTrimmedString(payload.landmark, "landmark", 200);
+  if (actor.role === "Admin" && payload.agent_id !== undefined) {
+    const nextAgentId = requiredString(payload.agent_id, "agent_id", 200);
+    const agentUser = deps.usersRepository.findById(nextAgentId);
+    if (agentUser === null || agentUser.role !== "Agent")
+      throw new CrudValidationError(
+        "agent_id must reference an existing Agent user.",
+      );
+    changes.agentId = nextAgentId;
+  }
+
+  let statusChanged = false;
+  let fromStatus = existing.currentStatus;
+  let toStatus = existing.currentStatus;
+  let transitionNotes = "";
+  let transitionJobOrder = existing.jobOrderNumber;
+  if (wantsStatusChange) {
+    if (!isApplicationStatus(payload.current_status))
+      throw new CrudValidationError("Invalid current_status.");
+    toStatus = payload.current_status;
+    fromStatus = existing.currentStatus;
+    transitionNotes =
+      typeof payload.notes === "string" ? payload.notes.trim() : "";
+    transitionJobOrder =
+      typeof payload.job_order_number === "string"
+        ? payload.job_order_number.trim()
+        : existing.jobOrderNumber;
+    const installedAt =
+      typeof payload.installed_at === "string"
+        ? payload.installed_at
+        : undefined;
+
+    const result = validateTransition({
+      fromStatus,
+      toStatus,
+      notes: transitionNotes || undefined,
+      jobOrderNumber: transitionJobOrder || undefined,
+      installedAt,
+      delayedFromStatus:
+        typeof payload.delayed_from_status === "string" &&
+        isApplicationStatus(payload.delayed_from_status) &&
+        payload.delayed_from_status !== "Delayed" &&
+        payload.delayed_from_status !== "Cancelled/Rejected" &&
+        payload.delayed_from_status !== "Installed"
+          ? payload.delayed_from_status
+          : undefined,
+      canReopenCancellation: actor.role === "Admin" ? true : undefined,
+    });
+    if (!result.valid) throw new CrudValidationError(result.issues[0]);
+
+    changes.currentStatus = toStatus;
+    changes.jobOrderNumber = transitionJobOrder;
+    if (installedAt !== undefined) changes.installedAt = installedAt;
+    if (transitionNotes) changes.notes = transitionNotes;
+    statusChanged = true;
+  } else if (payload.notes !== undefined) {
+    changes.notes = optionalTrimmedString(payload.notes, "notes", 2000);
+  }
+
+  const updated = deps.applicationsRepository.update(
+    existing as ApplicationRecordWithRow,
+    changes,
+  );
+
+  appendActivityLog(
+    deps.activityLogSheet,
+    {
+      actorUserId: actor.userId,
+      action: statusChanged
+        ? "APPLICATION_STATUS_CHANGE"
+        : "APPLICATION_UPDATE",
+      entityType: "Application",
+      entityId: applicationId,
+      requestId: envelope.jti,
+      metadata: {
+        changedFields: Object.keys(changes).filter(
+          (k) => k !== "version" && k !== "updatedAt",
+        ),
+        ...(statusChanged ? { fromStatus, toStatus } : {}),
+      },
+    },
+    deps.clock,
+    deps.ids,
+  );
+  if (statusChanged) {
+    appendStatusHistory(deps, {
+      applicationId,
+      fromStatus,
+      toStatus,
+      notes: transitionNotes,
+      jobOrderNumber: transitionJobOrder,
+      actorUserId: actor.userId,
+      requestId: envelope.jti,
+    });
+  }
+  void planNameSnapshot;
+  void monthlyPriceSnapshot;
+  return { data: updated, nextCursor: null };
+}
+
+/** POST /api/applications/:applicationId/assign — Admin only. */
+function assignApplication(
+  actor: Actor,
+  payload: Record<string, unknown>,
+  deps: CrudDependencies,
+  envelope: InternalEnvelope,
+): CrudResult {
+  if (actor.role !== "Admin") throw new CrudForbiddenError();
+  const applicationId = requiredString(
+    payload.application_id,
+    "application_id",
+    200,
+  );
+  const expectedVersion = payload.version;
+  if (typeof expectedVersion !== "number")
+    throw new CrudValidationError("Invalid value for version.");
+  const processorId = requiredString(payload.processor_id, "processor_id", 200);
+
+  const existing = deps.applicationsRepository.findById(applicationId);
+  if (existing === null) throw new CrudNotFoundError();
+
+  const processorUser = deps.usersRepository.findById(processorId);
+  if (
+    processorUser === null ||
+    processorUser.role !== "Processor" ||
+    processorUser.accountStatus !== "Active"
+  )
+    throw new CrudValidationError(
+      "processor_id must reference an existing, Active Processor user.",
+    );
+
+  let newVersion: number;
+  try {
+    newVersion = assertCurrentVersion(
+      { applicationId, version: existing.version },
+      expectedVersion,
+    );
+  } catch (error) {
+    if (error instanceof StaleVersionError) throw new CrudConflictError();
+    throw error;
+  }
+
+  const updated = deps.applicationsRepository.update(
+    existing as ApplicationRecordWithRow,
+    {
+      processorId,
+      version: newVersion,
+      updatedAt: deps.clock.now().toISOString(),
+    },
+  );
+
+  appendActivityLog(
+    deps.activityLogSheet,
+    {
+      actorUserId: actor.userId,
+      action: "APPLICATION_ASSIGN",
+      entityType: "Application",
+      entityId: applicationId,
+      requestId: envelope.jti,
+      metadata: { processorId },
     },
     deps.clock,
     deps.ids,

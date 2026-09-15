@@ -183,8 +183,7 @@ describe("MVP-2A internal-CRUD ingress", () => {
 
   const disallowed = [
     "plans_delete",
-    "applications_list",
-    "applications_update",
+    "applications_delete",
     "login_first_bind",
     "bootstrapSchema",
   ];
