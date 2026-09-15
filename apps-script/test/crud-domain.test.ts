@@ -3,6 +3,7 @@ import { executeCrud, type CrudDependencies } from "../core/crud-domain";
 import {
   CrudConflictError,
   CrudForbiddenError,
+  CrudLastAdminError,
   CrudNotFoundError,
   CrudValidationError,
 } from "../core/crud-domain";
@@ -11,6 +12,7 @@ import { AuthDenied } from "../core/auth-domain";
 import type { AuthConfig } from "../core/auth-config";
 import { signingInput } from "../core/auth-crypto";
 import { PlansRepository } from "../core/plans-repository";
+import { UsersRepository } from "../core/users-repository";
 import { MemorySheet } from "./helpers";
 import type { CrudOperation } from "../core/contracts";
 
@@ -90,6 +92,8 @@ const OPERATION_PATHS: Record<CrudOperation, string> = {
   plans_list: "/internal/v1/crud/plans/list",
   plans_create: "/internal/v1/crud/plans/create",
   plans_update: "/internal/v1/crud/plans/update",
+  users_list: "/internal/v1/crud/users/list",
+  users_update: "/internal/v1/crud/users/update",
 };
 
 function envelope(
@@ -181,7 +185,10 @@ function addSession(
   return { sessionToken, csrfToken };
 }
 
-function buildDeps(store: Store, clock: Clock): CrudDependencies {
+function buildDeps(
+  store: Store,
+  clock: Clock,
+): CrudDependencies & { usersSheet: MemorySheet } {
   let id = 0;
   const sheet = new MemorySheet();
   sheet.appendRow([
@@ -190,6 +197,17 @@ function buildDeps(store: Store, clock: Clock): CrudDependencies {
     "monthly_price",
     "speed_mbps",
     "plan_status",
+    "created_at",
+    "updated_at",
+  ]);
+  const usersSheet = new MemorySheet();
+  usersSheet.appendRow([
+    "user_id",
+    "email",
+    "full_name",
+    "mobile_number",
+    "role",
+    "account_status",
     "created_at",
     "updated_at",
   ]);
@@ -202,8 +220,33 @@ function buildDeps(store: Store, clock: Clock): CrudDependencies {
     authStore: store,
     lock: { run: <T>(work: () => T) => work() },
     plansRepository: new PlansRepository(sheet),
+    usersRepository: new UsersRepository(usersSheet),
     activityLogSheet,
+    usersSheet,
   };
+}
+
+function seedUserRow(
+  usersSheet: MemorySheet,
+  input: {
+    userId: string;
+    email?: string;
+    fullName?: string;
+    mobileNumber?: string;
+    role?: "Admin" | "Agent" | "Processor";
+    accountStatus?: "Active" | "Inactive" | "Locked";
+  },
+): void {
+  usersSheet.appendRow([
+    input.userId,
+    input.email ?? "user@example.com",
+    input.fullName ?? "Jane Doe",
+    input.mobileNumber ?? "09171234567",
+    input.role ?? "Agent",
+    input.accountStatus ?? "Active",
+    "2026-09-14T00:00:00.000Z",
+    "2026-09-14T00:00:00.000Z",
+  ]);
 }
 
 describe("MVP-2A CRUD domain — Plans", () => {
@@ -564,5 +607,511 @@ describe("MVP-2A CRUD domain — Plans", () => {
         deps,
       ),
     ).toThrow(AuthDenied);
+  });
+});
+
+describe("MVP-2B CRUD domain — Users", () => {
+  it("Admin can list users; Agent/Processor are forbidden", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, { userId: "admin-1", role: "Admin" });
+    seedUserRow(deps.usersSheet, { userId: "agent-1", role: "Agent" });
+
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken: adminToken } = addSession(store, admin);
+    const adminResult = executeCrud(
+      "users_list",
+      envelope("users_list", { session_token: adminToken }, clock),
+      deps,
+    );
+    expect((adminResult.data as unknown[]).length).toBe(2);
+
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken: agentToken } = addSession(store, agent);
+    expect(() =>
+      executeCrud(
+        "users_list",
+        envelope("users_list", { session_token: agentToken }, clock),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
+  });
+
+  it("paginates users using the same bounded default page size as Plans", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    for (let i = 0; i < 30; i += 1) {
+      seedUserRow(deps.usersSheet, { userId: `u-${i}`, role: "Agent" });
+    }
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken } = addSession(store, admin);
+    const result = executeCrud(
+      "users_list",
+      envelope("users_list", { session_token: sessionToken }, clock),
+      deps,
+    );
+    expect((result.data as unknown[]).length).toBe(25);
+    expect(result.nextCursor).toBe("25");
+  });
+
+  it("filters the users list by role and account_status", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, {
+      userId: "a1",
+      role: "Agent",
+      accountStatus: "Active",
+    });
+    seedUserRow(deps.usersSheet, {
+      userId: "p1",
+      role: "Processor",
+      accountStatus: "Inactive",
+    });
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken } = addSession(store, admin);
+    const result = executeCrud(
+      "users_list",
+      envelope(
+        "users_list",
+        { session_token: sessionToken, role: "Agent" },
+        clock,
+      ),
+      deps,
+    );
+    expect((result.data as { userId: string }[]).map((u) => u.userId)).toEqual([
+      "a1",
+    ]);
+  });
+
+  it("Admin can update another user's role and account_status", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, {
+      userId: "agent-1",
+      role: "Agent",
+      accountStatus: "Active",
+    });
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin);
+    const result = executeCrud(
+      "users_update",
+      envelope(
+        "users_update",
+        {
+          session_token: sessionToken,
+          csrf_token: csrfToken,
+          user_id: "agent-1",
+          expected_updated_at: "2026-09-14T00:00:00.000Z",
+          role: "Processor",
+        },
+        clock,
+      ),
+      deps,
+    );
+    expect(result.data).toMatchObject({ userId: "agent-1", role: "Processor" });
+    const activityRows = deps.activityLogSheet.rows;
+    expect(activityRows).toHaveLength(1);
+    expect(activityRows[0][1]).toBe("admin-1");
+    expect(activityRows[0][2]).toBe("USER_UPDATE");
+  });
+
+  it("rejects a non-Admin updating another user's role/account_status with FORBIDDEN", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, {
+      userId: "agent-1",
+      role: "Agent",
+      accountStatus: "Active",
+    });
+    seedUserRow(deps.usersSheet, {
+      userId: "agent-2",
+      role: "Agent",
+      accountStatus: "Active",
+    });
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken, csrfToken } = addSession(store, agent);
+    expect(() =>
+      executeCrud(
+        "users_update",
+        envelope(
+          "users_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            user_id: "agent-2",
+            expected_updated_at: "2026-09-14T00:00:00.000Z",
+            full_name: "Changed Name",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
+  });
+
+  it("allows any authenticated role to update their OWN full_name/mobile_number", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, {
+      userId: "processor-1",
+      role: "Processor",
+      accountStatus: "Active",
+    });
+    const processor = addUser(store, {
+      userId: "processor-1",
+      role: "Processor",
+    });
+    const { sessionToken, csrfToken } = addSession(store, processor);
+    const result = executeCrud(
+      "users_update",
+      envelope(
+        "users_update",
+        {
+          session_token: sessionToken,
+          csrf_token: csrfToken,
+          user_id: "processor-1",
+          expected_updated_at: "2026-09-14T00:00:00.000Z",
+          full_name: "New Name",
+          mobile_number: "09170001111",
+        },
+        clock,
+      ),
+      deps,
+    );
+    expect(result.data).toMatchObject({
+      userId: "processor-1",
+      fullName: "New Name",
+      mobileNumber: "09170001111",
+    });
+  });
+
+  it("rejects a non-Admin trying to change their own role/account_status via the profile route", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, {
+      userId: "agent-1",
+      role: "Agent",
+      accountStatus: "Active",
+    });
+    const agent = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken, csrfToken } = addSession(store, agent);
+    expect(() =>
+      executeCrud(
+        "users_update",
+        envelope(
+          "users_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            user_id: "agent-1",
+            expected_updated_at: "2026-09-14T00:00:00.000Z",
+            role: "Admin",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
+  });
+
+  it("prevents an Admin from moving their own role away from Admin (unsafe self-escalation-away block)", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, {
+      userId: "admin-1",
+      role: "Admin",
+      accountStatus: "Active",
+    });
+    seedUserRow(deps.usersSheet, {
+      userId: "admin-2",
+      role: "Admin",
+      accountStatus: "Active",
+    });
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin);
+    expect(() =>
+      executeCrud(
+        "users_update",
+        envelope(
+          "users_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            user_id: "admin-1",
+            expected_updated_at: "2026-09-14T00:00:00.000Z",
+            role: "Agent",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudForbiddenError);
+  });
+
+  it("prevents removing the last active Admin via a role change", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, {
+      userId: "admin-1",
+      role: "Admin",
+      accountStatus: "Active",
+    });
+    // A second Admin acts on the first (the only-other-admin case): still
+    // the last ACTIVE admin overall would become zero only if admin-1 is the
+    // sole active admin; here we simulate the sole-admin case directly by
+    // having admin-1 be acted on by an Admin session bound to admin-1 itself
+    // being excluded from the count. To exercise the true "last admin"
+    // rejection independent of self-escalation, a second Admin (admin-2)
+    // performs the change on admin-1 while admin-2 is not Active, so only
+    // admin-1 counts as active.
+    seedUserRow(deps.usersSheet, {
+      userId: "admin-2",
+      role: "Admin",
+      accountStatus: "Inactive",
+    });
+    const admin2 = addUser(store, { userId: "admin-2", role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin2);
+    expect(() =>
+      executeCrud(
+        "users_update",
+        envelope(
+          "users_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            user_id: "admin-1",
+            expected_updated_at: "2026-09-14T00:00:00.000Z",
+            role: "Agent",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudLastAdminError);
+  });
+
+  it("prevents removing the last active Admin via an account_status change to Inactive", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, {
+      userId: "admin-1",
+      role: "Admin",
+      accountStatus: "Active",
+    });
+    seedUserRow(deps.usersSheet, {
+      userId: "admin-2",
+      role: "Admin",
+      accountStatus: "Inactive",
+    });
+    const admin2 = addUser(store, { userId: "admin-2", role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin2);
+    expect(() =>
+      executeCrud(
+        "users_update",
+        envelope(
+          "users_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            user_id: "admin-1",
+            expected_updated_at: "2026-09-14T00:00:00.000Z",
+            account_status: "Locked",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudLastAdminError);
+  });
+
+  it("allows a role change away from Admin when another active Admin remains", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, {
+      userId: "admin-1",
+      role: "Admin",
+      accountStatus: "Active",
+    });
+    seedUserRow(deps.usersSheet, {
+      userId: "admin-2",
+      role: "Admin",
+      accountStatus: "Active",
+    });
+    const admin2 = addUser(store, { userId: "admin-2", role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin2);
+    const result = executeCrud(
+      "users_update",
+      envelope(
+        "users_update",
+        {
+          session_token: sessionToken,
+          csrf_token: csrfToken,
+          user_id: "admin-1",
+          expected_updated_at: "2026-09-14T00:00:00.000Z",
+          role: "Agent",
+        },
+        clock,
+      ),
+      deps,
+    );
+    expect(result.data).toMatchObject({ userId: "admin-1", role: "Agent" });
+  });
+
+  it("rejects a stale expected_updated_at with CrudConflictError", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, { userId: "agent-1", role: "Agent" });
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin);
+    expect(() =>
+      executeCrud(
+        "users_update",
+        envelope(
+          "users_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            user_id: "agent-1",
+            expected_updated_at: "2026-09-13T00:00:00.000Z",
+            full_name: "Changed",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudConflictError);
+  });
+
+  it("returns CrudNotFoundError for a nonexistent user_id", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin);
+    expect(() =>
+      executeCrud(
+        "users_update",
+        envelope(
+          "users_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            user_id: "does-not-exist",
+            expected_updated_at: "2026-09-14T00:00:00.000Z",
+            full_name: "Changed",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudNotFoundError);
+  });
+
+  it("rejects an invalid mobile_number with CrudValidationError", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, { userId: "agent-1", role: "Agent" });
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin);
+    expect(() =>
+      executeCrud(
+        "users_update",
+        envelope(
+          "users_update",
+          {
+            session_token: sessionToken,
+            csrf_token: csrfToken,
+            user_id: "agent-1",
+            expected_updated_at: "2026-09-14T00:00:00.000Z",
+            mobile_number: "abc",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(CrudValidationError);
+  });
+
+  it("rejects a user update without a valid CSRF token", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, { userId: "agent-1", role: "Agent" });
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken } = addSession(store, admin);
+    expect(() =>
+      executeCrud(
+        "users_update",
+        envelope(
+          "users_update",
+          {
+            session_token: sessionToken,
+            csrf_token: b64("X"),
+            user_id: "agent-1",
+            expected_updated_at: "2026-09-14T00:00:00.000Z",
+            full_name: "Changed",
+          },
+          clock,
+        ),
+        deps,
+      ),
+    ).toThrow(AuthDenied);
+  });
+
+  it("appends exactly one Activity_Logs row shaped for a User entity on update", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedUserRow(deps.usersSheet, { userId: "agent-1", role: "Agent" });
+    const admin = addUser(store, { userId: "admin-1", role: "Admin" });
+    const { sessionToken, csrfToken } = addSession(store, admin);
+    executeCrud(
+      "users_update",
+      envelope(
+        "users_update",
+        {
+          session_token: sessionToken,
+          csrf_token: csrfToken,
+          user_id: "agent-1",
+          expected_updated_at: "2026-09-14T00:00:00.000Z",
+          full_name: "Changed Name",
+        },
+        clock,
+      ),
+      deps,
+    );
+    const rows = deps.activityLogSheet.rows;
+    expect(rows).toHaveLength(1);
+    const [
+      logId,
+      actorUserId,
+      action,
+      entityType,
+      entityId,
+      requestId,
+      metadataJson,
+      occurredAt,
+    ] = rows[0];
+    expect(typeof logId).toBe("string");
+    expect(actorUserId).toBe("admin-1");
+    expect(action).toBe("USER_UPDATE");
+    expect(entityType).toBe("User");
+    expect(entityId).toBe("agent-1");
+    expect(typeof requestId).toBe("string");
+    expect(() => JSON.parse(String(metadataJson))).not.toThrow();
+    expect(typeof occurredAt).toBe("string");
   });
 });

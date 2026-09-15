@@ -1,13 +1,20 @@
 import type { CryptoAdapter } from "../auth/crypto";
 import { createInternalEnvelope, type SigningKey } from "../auth/signing";
 
-export type CrudOperation = "plans_list" | "plans_create" | "plans_update";
+export type CrudOperation =
+  | "plans_list"
+  | "plans_create"
+  | "plans_update"
+  | "users_list"
+  | "users_update";
 
 const OPERATION_PATHS: Record<CrudOperation, { method: "POST"; path: string }> =
   {
     plans_list: { method: "POST", path: "/internal/v1/crud/plans/list" },
     plans_create: { method: "POST", path: "/internal/v1/crud/plans/create" },
     plans_update: { method: "POST", path: "/internal/v1/crud/plans/update" },
+    users_list: { method: "POST", path: "/internal/v1/crud/users/list" },
+    users_update: { method: "POST", path: "/internal/v1/crud/users/update" },
   };
 
 export interface AppsScriptCrudResult {

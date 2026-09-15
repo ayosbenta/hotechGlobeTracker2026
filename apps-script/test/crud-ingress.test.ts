@@ -55,6 +55,27 @@ describe("MVP-2A internal-CRUD ingress", () => {
     });
   });
 
+  it("dispatches the MVP-2B users_list/users_update operations through the same allowlist", () => {
+    for (const operation of ["users_list", "users_update"] as const) {
+      let received: unknown;
+      const response = handlePost(
+        {
+          pathInfo: PATH,
+          postData: jsonBody({
+            operation,
+            envelope: { session_token: "x".repeat(43) },
+          }),
+        },
+        deps((op, envelope) => {
+          received = { operation: op, envelope };
+          return { data: { userId: "u1" }, nextCursor: null };
+        }),
+      );
+      expect(received).toMatchObject({ operation });
+      expect(response).toMatchObject({ ok: true, data: { userId: "u1" } });
+    }
+  });
+
   it("falls through to the frozen NOT_FOUND behavior for any other path", () => {
     const response = handlePost(
       { pathInfo: "/v1/other", postData: jsonBody(validOuter) },
@@ -163,7 +184,7 @@ describe("MVP-2A internal-CRUD ingress", () => {
   const disallowed = [
     "plans_delete",
     "applications_list",
-    "users_list",
+    "applications_update",
     "login_first_bind",
     "bootstrapSchema",
   ];

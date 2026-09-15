@@ -17,6 +17,7 @@ import { executeInternalAuth, type Operation } from "./core/auth-domain";
 import { SheetAuthStore } from "./core/sheet-auth-store";
 import { executeCrud } from "./core/crud-domain";
 import { PlansRepository } from "./core/plans-repository";
+import { UsersRepository } from "./core/users-repository";
 import type { CrudOperation } from "./core/contracts";
 import {
   cleanupPhase03BAcceptanceData as cleanupPhase03BAcceptanceDataInternal,
@@ -176,6 +177,7 @@ export function executeCrudPhase2A(
       authStore: new SheetAuthStore(spreadsheet),
       lock: { run: (work) => work() },
       plansRepository: new PlansRepository(repository.requiredSheet("Plans")),
+      usersRepository: new UsersRepository(repository.requiredSheet("Users")),
       activityLogSheet: repository.requiredSheet("Activity_Logs"),
     });
   });

@@ -10,7 +10,9 @@ export type RateLimitBucket =
   | "csrf"
   | "logout"
   | "plans-read"
-  | "plans-write";
+  | "plans-write"
+  | "users-read"
+  | "users-write";
 
 export interface RateLimitOutcome {
   allowed: boolean;
@@ -86,6 +88,18 @@ export function createUpstashRateLimiter(redis: Redis): RateLimiter {
       redis,
       analytics: false,
       prefix: "hotech:rl:plans-write",
+      limiter: Ratelimit.slidingWindow(20, "1 m"),
+    }),
+    "users-read": new Ratelimit({
+      redis,
+      analytics: false,
+      prefix: "hotech:rl:users-read",
+      limiter: Ratelimit.slidingWindow(60, "1 m"),
+    }),
+    "users-write": new Ratelimit({
+      redis,
+      analytics: false,
+      prefix: "hotech:rl:users-write",
       limiter: Ratelimit.slidingWindow(20, "1 m"),
     }),
   };

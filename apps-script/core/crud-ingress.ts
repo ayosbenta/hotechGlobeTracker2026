@@ -22,6 +22,8 @@ const ALLOWED_OPERATIONS: readonly CrudOperation[] = [
   "plans_list",
   "plans_create",
   "plans_update",
+  "users_list",
+  "users_update",
 ];
 
 function isAllowedOperation(value: unknown): value is CrudOperation {

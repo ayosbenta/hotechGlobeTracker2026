@@ -12,6 +12,8 @@ import type {
   CrudOperation,
   PlanRecord,
   PlanStatus,
+  UserAccountStatus,
+  UserRole,
   UuidGenerator,
 } from "./contracts";
 import {
@@ -19,6 +21,12 @@ import {
   type PlanRecordWithRow,
   type PlansRepository,
 } from "./plans-repository";
+import {
+  isUserAccountStatus,
+  isUserRole,
+  type UserRecordWithRow,
+  type UsersRepository,
+} from "./users-repository";
 import { withScriptLock, type LockServiceAdapter } from "./lock";
 import { appendActivityLog } from "./audit";
 import type { SpreadsheetSheet } from "./schema";
@@ -48,6 +56,20 @@ export class CrudConflictError extends Error {
   }
 }
 
+/**
+ * MVP-2B: rejecting a last-active-Admin demotion/deactivation with
+ * VALIDATION_ERROR (not FORBIDDEN) — the acting Admin IS authorized to edit
+ * Users; the request is simply invalid because it would leave the system
+ * with zero active Admins. FORBIDDEN is reserved for "you may not perform
+ * this kind of action at all" (wrong role / not your own row).
+ */
+export class CrudLastAdminError extends CrudValidationError {
+  constructor() {
+    super("This action would leave no active Admin account.");
+    this.name = "CrudLastAdminError";
+  }
+}
+
 const OPERATION_CONTRACTS: Record<
   CrudOperation,
   { method: string; path: string }
@@ -55,6 +77,8 @@ const OPERATION_CONTRACTS: Record<
   plans_list: { method: "POST", path: "/internal/v1/crud/plans/list" },
   plans_create: { method: "POST", path: "/internal/v1/crud/plans/create" },
   plans_update: { method: "POST", path: "/internal/v1/crud/plans/update" },
+  users_list: { method: "POST", path: "/internal/v1/crud/users/list" },
+  users_update: { method: "POST", path: "/internal/v1/crud/users/update" },
 };
 
 export interface CrudAuthDependencies {
@@ -72,6 +96,7 @@ export interface CrudLock {
 export interface CrudDependencies extends CrudAuthDependencies {
   lock: CrudLock;
   plansRepository: PlansRepository;
+  usersRepository: UsersRepository;
   activityLogSheet: SpreadsheetSheet;
 }
 
@@ -112,6 +137,40 @@ function requiredPositiveNumber(value: unknown, field: string): number {
 function requiredPlanStatus(value: unknown): PlanStatus {
   if (!isPlanStatus(value))
     throw new CrudValidationError("Invalid plan_status.");
+  return value;
+}
+
+function optionalString(
+  value: unknown,
+  field: string,
+  maxLength: number,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.trim() === "" ||
+    value.length > maxLength
+  )
+    throw new CrudValidationError(`Invalid value for ${field}.`);
+  return value.trim();
+}
+
+const MOBILE_NUMBER_PATTERN = /^[0-9+()\-.\s]{7,20}$/;
+
+function requiredMobileNumber(value: unknown): string {
+  const candidate = optionalString(value, "mobile_number", 20);
+  if (!MOBILE_NUMBER_PATTERN.test(candidate))
+    throw new CrudValidationError("Invalid value for mobile_number.");
+  return candidate;
+}
+
+function requiredUserRole(value: unknown): UserRole {
+  if (!isUserRole(value)) throw new CrudValidationError("Invalid role.");
+  return value;
+}
+
+function requiredUserAccountStatus(value: unknown): UserAccountStatus {
+  if (!isUserAccountStatus(value))
+    throw new CrudValidationError("Invalid account_status.");
   return value;
 }
 
@@ -169,6 +228,9 @@ export function executeCrud(
     if (operation === "plans_list") {
       return listPlans(actor.role, payload, deps);
     }
+    if (operation === "users_list") {
+      return listUsers(actor.role, payload, deps);
+    }
 
     // Every mutation additionally requires CSRF double-submit.
     requireSessionCsrf(authDeps, sessionToken, payload.csrf_token);
@@ -178,6 +240,9 @@ export function executeCrud(
     }
     if (operation === "plans_update") {
       return updatePlan(actor, payload, deps, verified.envelope);
+    }
+    if (operation === "users_update") {
+      return updateUser(actor, payload, deps, verified.envelope);
     }
     throw new CrudValidationError();
   });
@@ -296,6 +361,120 @@ function updatePlan(
       requestId: envelope.jti,
       metadata: {
         changedFields: Object.keys(changes).filter((k) => k !== "updatedAt"),
+      },
+    },
+    deps.clock,
+    deps.ids,
+  );
+  return { data: updated, nextCursor: null };
+}
+
+function listUsers(
+  role: "Admin" | "Agent" | "Processor",
+  payload: Record<string, unknown>,
+  deps: CrudDependencies,
+): CrudResult {
+  if (role !== "Admin") throw new CrudForbiddenError();
+  const filter: { role?: UserRole; accountStatus?: UserAccountStatus } = {};
+  if (payload.role !== undefined) filter.role = requiredUserRole(payload.role);
+  if (payload.account_status !== undefined)
+    filter.accountStatus = requiredUserAccountStatus(payload.account_status);
+  const all = deps.usersRepository.list(filter);
+  const { page, nextCursor } = paginate(all, payload.cursor, payload.limit);
+  return { data: page, nextCursor };
+}
+
+/**
+ * PATCH /api/users/:userId domain behavior. Admins may change any user's
+ * role/account_status/profile fields; any authenticated user (any role) may
+ * update only their OWN full_name/mobile_number through this same operation.
+ * An Admin may never change their own role away from Admin, and no change
+ * (role-away-from-Admin or account_status-to-inactive/locked on an Admin
+ * row) may reduce the count of remaining active Admins to zero.
+ */
+function updateUser(
+  actor: { userId: string; role: "Admin" | "Agent" | "Processor" },
+  payload: Record<string, unknown>,
+  deps: CrudDependencies,
+  envelope: InternalEnvelope,
+): CrudResult {
+  const userId = requiredString(payload.user_id, "user_id", 200);
+  const expectedUpdatedAt = requiredString(
+    payload.expected_updated_at,
+    "expected_updated_at",
+    64,
+  );
+  const existing = deps.usersRepository.findById(userId);
+  if (existing === null) throw new CrudNotFoundError();
+  if (existing.updatedAt !== expectedUpdatedAt) throw new CrudConflictError();
+
+  const isSelf = actor.userId === userId;
+  const wantsRoleChange = payload.role !== undefined;
+  const wantsAccountStatusChange = payload.account_status !== undefined;
+
+  if (actor.role !== "Admin") {
+    // Non-admins may only ever update their own profile fields.
+    if (!isSelf || wantsRoleChange || wantsAccountStatusChange)
+      throw new CrudForbiddenError();
+  } else if (!isSelf) {
+    // Admin acting on another user: full write access to the allowed fields.
+  } else {
+    // Admin acting on their own row: profile changes are fine, but an Admin
+    // may never move their OWN role away from Admin through this route
+    // (unsafe self-role-escalation-away prevention).
+    if (wantsRoleChange && requiredUserRole(payload.role) !== "Admin")
+      throw new CrudForbiddenError();
+  }
+
+  const nextRole = wantsRoleChange
+    ? requiredUserRole(payload.role)
+    : existing.role;
+  const nextAccountStatus = wantsAccountStatusChange
+    ? requiredUserAccountStatus(payload.account_status)
+    : existing.accountStatus;
+
+  // Prevent removing the last active Admin: if this row is currently an
+  // active Admin and the requested change would make it stop counting as
+  // one, ensure at least one OTHER active Admin remains.
+  const losingAdminEligibility =
+    existing.role === "Admin" &&
+    existing.accountStatus === "Active" &&
+    (nextRole !== "Admin" ||
+      (nextAccountStatus !== "Active" && wantsAccountStatusChange));
+  if (losingAdminEligibility) {
+    const remaining = deps.usersRepository.countActiveAdmins(userId);
+    if (remaining === 0) throw new CrudLastAdminError();
+  }
+
+  const changes: {
+    fullName?: string;
+    mobileNumber?: string;
+    role?: UserRole;
+    accountStatus?: UserAccountStatus;
+    updatedAt: string;
+  } = { updatedAt: deps.clock.now().toISOString() };
+  if (payload.full_name !== undefined)
+    changes.fullName = optionalString(payload.full_name, "full_name", 200);
+  if (payload.mobile_number !== undefined)
+    changes.mobileNumber = requiredMobileNumber(payload.mobile_number);
+  if (wantsRoleChange) changes.role = nextRole;
+  if (wantsAccountStatusChange) changes.accountStatus = nextAccountStatus;
+
+  const updated = deps.usersRepository.update(
+    existing as UserRecordWithRow,
+    changes,
+  );
+  appendActivityLog(
+    deps.activityLogSheet,
+    {
+      actorUserId: actor.userId,
+      action: "USER_UPDATE",
+      entityType: "User",
+      entityId: userId,
+      requestId: envelope.jti,
+      metadata: {
+        changedFields: Object.keys(changes).filter((k) => k !== "updatedAt"),
+        self: isSelf,
       },
     },
     deps.clock,

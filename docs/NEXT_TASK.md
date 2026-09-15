@@ -59,7 +59,7 @@ proven once (MVP-2A) before being repeated across the remaining entity/role surf
 | Batch | Scope | Depends on | Status |
 | --- | --- | --- | --- |
 | MVP-2A | Shared contracts, Apps Script repository layer, Admin Plans CRUD | MVP-1 (auth ingress pattern) | **Implemented locally, checkpoint commit. Not Owner Approved.** |
-| MVP-2B | Admin Users/role assignments and account-status management | MVP-2A (repository layer) | Not started |
+| MVP-2B | Admin Users/role assignments and account-status management | MVP-2A (repository layer) | **Implemented locally, checkpoint commit. Not Owner Approved.** |
 | MVP-2C | Applications create/read/update foundation | MVP-2A, MVP-2B (agent/processor assignment needs Users) | Not started |
 | MVP-2D | Agent own-application workflow (create, view own) | MVP-2C | Not started |
 | MVP-2E | Processor queue/assignment/status transitions | MVP-2C, MVP-2D | Not started |
