@@ -1,4 +1,4 @@
-# Next Task — MVP-2: Core Tracker CRUD (MVP-2A implemented, MVP-2B–2F not started)
+# Next Task — MVP-2: Core Tracker CRUD (MVP-2A/2B implemented, MVP-2C–2F not started)
 
 Roadmap reference: **`docs/MVP_COMPLETION_PLAN.md`** — Owner Approved (2026-09-15), along with
 decisions D-035/D-036.
@@ -8,9 +8,10 @@ versioning, status-transition matrix, audit primitives — see `apps-script/core
 `versioning.ts`, `lock.ts`, `audit.ts`, `status-transitions.ts`), and the frozen Phase 03A/03B/03C1
 authentication chain MVP-1 now fronts.
 
-Status: **MVP-2A implemented locally as a checkpoint commit (2026-09-16); not Owner Approved.**
-MVP-2B–2F remain planning-only. See "MVP-2 — Core Tracker CRUD (planned)" below for the full
-specification, and "MVP-2A result (2026-09-16)" for what was actually built and verified.
+Status: **MVP-2A and MVP-2B implemented locally as checkpoint commits (2026-09-16); not Owner
+Approved.** MVP-2C–2F remain planning-only. See "MVP-2 — Core Tracker CRUD (planned)" below for the
+full specification, and "MVP-2A result (2026-09-16)"/"MVP-2B result (2026-09-16)" for what was
+actually built and verified.
 
 ## Roadmap change (2026-09-15, Owner Approved)
 
@@ -118,6 +119,67 @@ locally (not pushed) as `feat(mvp-2a): implement plans crud foundation`.
 Vercel Preview was used; that remains MVP-4. `plans_update`'s allowed-fields set is the full Plans
 entity (name/price/speed/status) per §D; no separate deactivate-only endpoint was added. MVP-2A
 does not implement Users, Applications, or any other MVP-2B–2F scope.
+
+### MVP-2B result (2026-09-16)
+
+Implemented and locally verified per the spec below, as a checkpoint commit (not Owner Approved —
+see D-039/D-042). Summary:
+
+- `apps-script/core/contracts.ts`: extended `CrudOperation` with `users_list`/`users_update`, and
+  added `UserRecord`/`UserRole`/`UserAccountStatus` types. Confirmed against `schema.ts` that the
+  frozen `Users` sheet has no `version` column, so — per D-041's precedent — Users reuse the exact
+  same `updated_at`-token optimistic concurrency pattern as Plans.
+- `apps-script/core/users-repository.ts` (new): header-addressed `UsersRepository` (list with
+  role/account_status filters, findById, countActiveAdmins, update) over the frozen `Users` sheet's
+  eight base columns, following `PlansRepository`'s shape. It is a separate, non-overlapping
+  read/patch adapter from `SheetAuthStore`, which owns the auth-suffix columns and session logic.
+- `apps-script/core/crud-domain.ts`: extended (not replaced) — `users_list` requires Admin and
+  supports `role`/`account_status` filters using the same pagination as `plans_list`. `users_update`
+  implements the full write-authorization policy: an Admin may change any user's
+  role/account_status/profile fields; any authenticated user (Admin/Agent/Processor) may update only
+  their OWN `full_name`/`mobile_number` through the same operation when `user_id` matches their
+  session's `userId`; a non-Admin attempting a role/account_status change (even on their own row) is
+  rejected with `CrudForbiddenError`. An Admin may never move their own role away from Admin through
+  this route (self-escalation-away block, `CrudForbiddenError`). Before applying a role change away
+  from Admin or an account_status change off Active on a row that is currently an active Admin, the
+  domain counts remaining active Admins excluding that row; if it would reach zero, the mutation is
+  rejected with a new `CrudLastAdminError` (extends `CrudValidationError`, classified
+  `VALIDATION_ERROR` — chosen over `FORBIDDEN` because the acting Admin IS authorized to edit Users;
+  the request is simply invalid, reusing the existing safe-error taxonomy per §I without inventing a
+  new `ErrorCode`). Every mutation runs under the existing `withScriptLock` and appends one
+  `Activity_Logs` row (`USER_UPDATE`) via the unchanged `appendActivityLog`.
+- `apps-script/core/crud-ingress.ts`: `ALLOWED_OPERATIONS` extended with `users_list`/`users_update`
+  — no new route; `POST /v1/internal/crud` is reused exactly as MVP-2A wired it.
+- `apps-script/Code.ts`: `executeCrudPhase2A` now also constructs a `UsersRepository` over the
+  `Users` sheet and passes it into `executeCrud`'s dependencies.
+- BFF: `server/crud/routes/users.ts` (`handleListUsersRoute`, `handleUpdateUserRoute`) and
+  `api/users/index.ts`/`api/users/[userId].ts`, mirroring the Plans route files' structure exactly
+  — same `BffResponse<T>` envelope, session-cookie + CSRF double-submit + Origin check on mutations,
+  and the unchanged `BffErrorCode` taxonomy (no new codes). `server/crud/apps-script-crud-client.ts`
+  and `server/auth/route-types.ts`/`env.ts` already declared `users_list`/`users_update` and
+  `APPS_SCRIPT_CRUD_URL` from MVP-2A's forward-looking types, so only the `CrudOperation` union and
+  its `OPERATION_PATHS` entries needed extending in the BFF crud client. Two new rate-limit buckets
+  (`users-read`, `users-write`) were added to `server/auth/rate-limit.ts`, following the
+  `plans-read`/`plans-write` pattern exactly.
+- No frontend/dashboard file was touched; `DashboardShell` navigation remains inert, per §K.
+
+**Verification (local; no live external resource used):** 118/118 Apps Script tests (was 96, +22:
+5 Users-repository, plus crud-domain/crud-ingress cases covering RBAC allow/deny per role,
+self-escalation block, last-admin block on both role-change and account-status-change paths,
+concurrency conflict, not-found, invalid-mobile-number validation, missing-CSRF, and audit-row
+shape), 342/342 total unit tests (was 300, +42: the 22 above + 20 new BFF users-route tests),
+`npm run format`/`format:check`, `npm run lint` (0 errors, same one pre-existing warning),
+`npm run typecheck`, `npm run gas:build`/`gas:check` (both pass unchanged — no new route was added,
+so no artifact-check update was needed), `npm run build` (production bundle scanned clean of
+secrets), `npx playwright test` (19/19 unchanged), a credential/secret grep over the diff (clean),
+and `git diff --check` (clean, only benign CRLF-conversion warnings). Committed locally (not
+pushed) as `feat(mvp-2b): implement user administration`.
+
+**Known limitations:** local/mocked only — no live Apps Script deployment, live Google/Upstash, or
+Vercel Preview was used; that remains MVP-4. `users_update`'s allowed-fields set matches §D exactly
+(role, account_status, full_name, mobile_number); no separate Users-create endpoint was added
+(Users remain pre-provisioned per the frozen Phase 03A first-bind flow, unchanged by this batch).
+MVP-2B does not implement Applications or any other MVP-2C–2F scope.
 
 Each batch ends in a working, independently testable slice; none is implemented until explicitly
 instructed, batch by batch.
