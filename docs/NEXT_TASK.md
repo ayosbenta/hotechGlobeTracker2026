@@ -1,4 +1,4 @@
-# Next Task — MVP-2: Core Tracker CRUD (MVP-2A/2B/2C/2D/2E implemented, MVP-2F not started)
+# Next Task — MVP-2: Core Tracker CRUD (MVP-2A-2F implemented; MVP-3 not started)
 
 Roadmap reference: **`docs/MVP_COMPLETION_PLAN.md`** — Owner Approved (2026-09-15), along with
 decisions D-035/D-036.
@@ -8,10 +8,10 @@ versioning, status-transition matrix, audit primitives — see `apps-script/core
 `versioning.ts`, `lock.ts`, `audit.ts`, `status-transitions.ts`), and the frozen Phase 03A/03B/03C1
 authentication chain MVP-1 now fronts.
 
-Status: **MVP-2A, MVP-2B, and MVP-2C (which also completes MVP-2D/2E per D-043) implemented locally
-as checkpoint commits (2026-09-16); not Owner Approved.** MVP-2F remains planning-only. See
-"MVP-2 — Core Tracker CRUD (planned)" below for the full specification, and "MVP-2A/2B/2C result"
-sections for what was actually built and verified.
+Status: **MVP-2A through MVP-2F implemented locally as checkpoint commits (2026-09-16); not Owner
+Approved.** MVP-2 Core Tracker CRUD is now fully implemented (backend/API-only, per §K). MVP-3
+Dashboard Live Data is next and not started. See "MVP-2 — Core Tracker CRUD (planned)" below for
+the full specification, and the per-batch result sections for what was actually built and verified.
 
 ## Roadmap change (2026-09-15, Owner Approved)
 
@@ -64,7 +64,7 @@ proven once (MVP-2A) before being repeated across the remaining entity/role surf
 | MVP-2C | Applications create/read/update foundation | MVP-2A, MVP-2B (agent/processor assignment needs Users) | **Implemented locally, checkpoint commit. Not Owner Approved.** |
 | MVP-2D | Agent own-application workflow (create, view own) | MVP-2C | **Folded into MVP-2C's implementation (D-043) — full RBAC was built from the start.** |
 | MVP-2E | Processor queue/assignment/status transitions | MVP-2C, MVP-2D | **Folded into MVP-2C's implementation (D-043) — full RBAC was built from the start.** |
-| MVP-2F | Integration verification, audits, and regression across 2A–2E | MVP-2A..2E | Not started |
+| MVP-2F | Integration verification, audits, and regression across 2A–2E | MVP-2A..2E | **Implemented locally, checkpoint commit. Not Owner Approved.** |
 
 ### MVP-2A result (2026-09-16)
 
@@ -239,7 +239,20 @@ one pre-existing warning), `npm run typecheck`, `npm run gas:build`/`gas:check` 
 
 **Known limitations:** local/mocked only — no live Apps Script deployment, live Google/Upstash, or
 Vercel Preview was used; that remains MVP-4. No Attachments/uploads were implemented (deferred
-post-MVP per the roadmap). MVP-2F (integration verification across 2A-2E) remains not started.
+post-MVP per the roadmap).
+
+### MVP-2F result (2026-09-16)
+
+Reviewed the RBAC matrix, concurrency, lock-conflict, and audit-row-shape coverage already
+accumulated across MVP-2A/2B/2C and found it already comprehensive per D-044: every §B role x
+action combination has an explicit allow/deny test, both concurrency primitives have stale-value
+tests, the frozen `validateTransition` graph has explicit-rejection tests, and every mutation's
+`Activity_Logs`/`Status_History` row shape is asserted. The one gap found — no test proving a
+lock-acquisition failure propagates unchanged through `executeCrud` for more than one entity — was
+closed with one new test. No frontend/dashboard file was touched, per §K; all Playwright regressions
+pass unmodified. Verification: 140/140 Apps Script tests (+1), 391/391 total unit tests (+1), all
+other gates unchanged and passing. Committed locally (not pushed) as
+`test(mvp-2f): verify core tracker workflows`. See D-044.
 
 Each batch ends in a working, independently testable slice; none is implemented until explicitly
 instructed, batch by batch.
@@ -805,9 +818,10 @@ passes. Old Phase 03C2 is superseded by MVP-1 and old Phase 03D by MVP-4.
   login/dashboard-auth UI changes require an explicit owner change request.
 - **Phase 03C1A: Ready for Owner Review** (unchanged; committed locally, not pushed). Live
   acceptance deferred to MVP-4.
-- **MVP-2 — Core Tracker CRUD: MVP-2A/2B/2C implemented locally (checkpoint commits, not Owner
-  Approved); MVP-2D/2E folded into MVP-2C (D-043); MVP-2F not started.** Split into MVP-2A–2F (see
-  above); full route/RBAC/transition/validation/concurrency/audit/pagination/error/test
-  specification is recorded above. Committed locally (not pushed) as
-  `feat(mvp-2a): implement plans crud foundation`, `feat(mvp-2b): implement user administration`,
-  and `feat(mvp-2c): implement applications crud foundation`.
+- **MVP-2 — Core Tracker CRUD: fully implemented locally (checkpoint commits, not Owner
+  Approved).** MVP-2D/2E folded into MVP-2C (D-043); MVP-2F verified existing coverage and closed
+  one gap (D-044). Split into MVP-2A–2F (see above); full
+  route/RBAC/transition/validation/concurrency/audit/pagination/error/test specification is
+  recorded above. Committed locally (not pushed) as `feat(mvp-2a): implement plans crud foundation`,
+  `feat(mvp-2b): implement user administration`, `feat(mvp-2c): implement applications crud
+  foundation`, and `test(mvp-2f): verify core tracker workflows`.

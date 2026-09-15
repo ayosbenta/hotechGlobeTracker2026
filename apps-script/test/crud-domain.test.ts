@@ -2094,3 +2094,36 @@ describe("MVP-2C/2D/2E CRUD domain — Applications", () => {
     ).toThrow(CrudForbiddenError);
   });
 });
+
+describe("MVP-2F integration verification — lock-conflict propagation", () => {
+  it("propagates a lock-acquisition failure from deps.lock.run unchanged for every entity", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    const admin = addUser(store, { role: "Admin" });
+    const { sessionToken } = addSession(store, admin);
+    class LockBusyError extends Error {}
+    const lockedDeps: CrudDependencies = {
+      ...deps,
+      lock: {
+        run: () => {
+          throw new LockBusyError();
+        },
+      },
+    };
+    expect(() =>
+      executeCrud(
+        "plans_list",
+        envelope("plans_list", { session_token: sessionToken }, clock),
+        lockedDeps,
+      ),
+    ).toThrow(LockBusyError);
+    expect(() =>
+      executeCrud(
+        "applications_list",
+        envelope("applications_list", { session_token: sessionToken }, clock),
+        lockedDeps,
+      ),
+    ).toThrow(LockBusyError);
+  });
+});
