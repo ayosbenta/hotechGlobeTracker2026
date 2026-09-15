@@ -10,6 +10,10 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    environmentMatchGlobs: [
+      ["server/**", "node"],
+      ["apps-script/**", "node"],
+    ],
     exclude: ["e2e/**", "node_modules/**", "dist/**"],
     setupFiles: "./src/test/setup.ts",
   },

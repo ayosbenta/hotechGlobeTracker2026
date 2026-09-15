@@ -39,6 +39,14 @@ export default tseslint.config(
     },
   },
   {
+    files: ["server/**/*.ts", "api/**/*.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
     files: ["apps-script/Code.ts"],
     rules: {
       "@typescript-eslint/no-unused-vars": "off",
