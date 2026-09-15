@@ -2,9 +2,16 @@ import type { ApiResponse, Clock, UuidGenerator } from "./contracts";
 import { createRequestContext } from "./runtime";
 import { failure, success } from "./response";
 import { parsePathInfo } from "./request";
+import {
+  handleInternalAuthRequest,
+  INTERNAL_AUTH_PATH,
+  type IngressDependencies,
+  type IngressPostData,
+} from "./auth-ingress";
 
 export interface WebRequestEvent {
   pathInfo?: string;
+  postData?: IngressPostData;
 }
 
 export interface HealthDependencies {
@@ -37,11 +44,35 @@ export function handleGet(
   }
 }
 
-/** No POST route is enabled until an approved, authenticated mutation phase. */
+export interface PostDependencies {
+  clock: Clock;
+  uuidGenerator: UuidGenerator;
+  /**
+   * Present only when the internal-auth ingress is wired. Its absence keeps
+   * every other POST path on the frozen safe not-found behavior.
+   */
+  internalAuth?: IngressDependencies["executeInternalAuth"];
+}
+
+/**
+ * The only routed POST path is the internal-auth ingress at
+ * `/v1/internal/auth`; every other path retains the frozen safe NOT_FOUND
+ * response.
+ */
 export function handlePost(
-  _event: WebRequestEvent,
-  dependencies: Pick<HealthDependencies, "clock" | "uuidGenerator">,
-): ApiResponse<never> {
+  event: WebRequestEvent,
+  dependencies: PostDependencies,
+): ApiResponse<unknown> {
+  if (
+    dependencies.internalAuth !== undefined &&
+    parsePathInfo(event.pathInfo) === INTERNAL_AUTH_PATH
+  ) {
+    return handleInternalAuthRequest(event, {
+      clock: dependencies.clock,
+      uuidGenerator: dependencies.uuidGenerator,
+      executeInternalAuth: dependencies.internalAuth,
+    });
+  }
   const context = createRequestContext(
     dependencies.clock,
     dependencies.uuidGenerator,

@@ -63,12 +63,34 @@ export interface AppsScriptClientConfig {
 interface Fetcher {
   (
     url: string,
-    init: { method: string; headers: Record<string, string>; body: string },
+    init: {
+      method: string;
+      headers: Record<string, string>;
+      body: string;
+      signal?: AbortSignal;
+    },
   ): Promise<{
     ok: boolean;
     status: number;
     json(): Promise<unknown>;
   }>;
+}
+
+const REQUEST_TIMEOUT_MS = 12_000;
+
+type ScriptErrorCode = "AUTH_DENIED" | "CONFLICT" | "INTERNAL_ERROR";
+
+function scriptErrorCode(
+  body: Record<string, unknown>,
+): ScriptErrorCode | null {
+  const error = body.error;
+  if (error === null || typeof error !== "object") return null;
+  const code = (error as Record<string, unknown>).code;
+  return code === "AUTH_DENIED" ||
+    code === "CONFLICT" ||
+    code === "INTERNAL_ERROR"
+    ? code
+    : null;
 }
 
 /**
@@ -96,19 +118,26 @@ export function createAppsScriptAuthClient(
           payload,
         },
       );
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       let response;
       try {
         response = await fetcher(config.internalUrl, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ operation, envelope }),
+          signal: controller.signal,
         });
       } catch {
+        // Covers network failure and the 12-second abort timeout alike; no
+        // automatic retry is attempted for any auth/session mutation.
         throw new AppsScriptUnavailableError();
+      } finally {
+        clearTimeout(timeout);
       }
       if (!response.ok) {
-        // 5xx, 429 (quota), and 408 (timeout) are retryable upstream
-        // conditions, not an authoritative denial of the request.
+        // 5xx, 429 (quota), and 408 (timeout) are retryable Google-edge
+        // conditions, never a script-authored denial.
         if (
           response.status >= 500 ||
           response.status === 429 ||
@@ -123,14 +152,21 @@ export function createAppsScriptAuthClient(
       } catch {
         throw new AppsScriptUnavailableError();
       }
-      if (
-        body === null ||
-        typeof body !== "object" ||
-        (body as Record<string, unknown>).ok !== true ||
-        typeof (body as Record<string, unknown>).data !== "object"
-      )
-        throw new AppsScriptDeniedError();
-      return (body as { data: AppsScriptAuthResult }).data;
+      if (body === null || typeof body !== "object")
+        throw new AppsScriptUnavailableError();
+      const record = body as Record<string, unknown>;
+      if (record.ok === true) {
+        if (typeof record.data !== "object" || record.data === null)
+          throw new AppsScriptUnavailableError();
+        return record.data as AppsScriptAuthResult;
+      }
+      // Apps Script always answers HTTP 200; the JSON envelope's own error
+      // code, not the HTTP status, is authoritative for the outcome.
+      const code = scriptErrorCode(record);
+      if (code === "AUTH_DENIED") throw new AppsScriptDeniedError();
+      if (code === "CONFLICT" || code === "INTERNAL_ERROR")
+        throw new AppsScriptUnavailableError();
+      throw new AppsScriptUnavailableError();
     },
   };
 }

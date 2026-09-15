@@ -18,6 +18,7 @@ const SAFE_MESSAGES: Record<ErrorCode, string> = {
   CONFLICT: "The request could not be completed due to a conflict.",
   RATE_LIMITED: "Too many requests. Please try again later.",
   INTERNAL_ERROR: "An internal server error occurred.",
+  AUTH_DENIED: "Authentication was not accepted.",
 };
 
 export function success<T>(

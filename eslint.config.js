@@ -39,7 +39,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["server/**/*.ts", "api/**/*.ts"],
+    files: ["server/**/*.ts", "api/**/*.ts", "scripts/*.ts"],
     languageOptions: {
       globals: {
         ...globals.node,

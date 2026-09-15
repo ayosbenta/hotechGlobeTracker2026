@@ -23,6 +23,7 @@ import {
 
 interface AppsScriptEvent {
   pathInfo?: string;
+  postData?: { type?: string; contents?: string };
 }
 
 function dependencies() {
@@ -48,10 +49,27 @@ export function doGet(event: AppsScriptEvent): unknown {
   return jsonOutput(serialize(handleGet(event, dependencies())));
 }
 
-/** No POST operations are enabled in Phase 02. */
+/**
+ * The only routed POST path is the internal-auth ingress at
+ * `/v1/internal/auth`, dispatching unchanged into the frozen Phase 03B
+ * domain. Every other POST path retains the frozen safe NOT_FOUND response.
+ */
 export function doPost(event: AppsScriptEvent): unknown {
   const { clock, uuidGenerator } = dependencies();
-  return jsonOutput(serialize(handlePost(event, { clock, uuidGenerator })));
+  return jsonOutput(
+    serialize(
+      handlePost(event, {
+        clock,
+        uuidGenerator,
+        internalAuth: (operation, envelope) =>
+          executeInternalAuthPhase03B(operation, envelope) as {
+            userId?: string;
+            role?: string;
+            sessionId?: string;
+          },
+      }),
+    ),
+  );
 }
 
 /**

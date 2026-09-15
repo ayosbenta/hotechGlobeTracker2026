@@ -18,7 +18,9 @@
     "gas:check": "node scripts/check-apps-script-artifact.mjs",
     "gas:test": "npm run test:apps-script && npm run gas:build && npm run gas:check",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "acceptance:phase-03c1a": "node scripts/run-phase-03c1a-acceptance.mjs",
+    "acceptance:phase-03c1a:check": "node scripts/run-phase-03c1a-acceptance.mjs --check-only"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.3",

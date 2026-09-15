@@ -1,0 +1,297 @@
+import { describe, expect, it } from "vitest";
+
+import { handlePost, type PostDependencies } from "../core/api";
+import { AuthDenied } from "../core/auth-domain";
+import { EnvelopeError } from "../core/auth-envelope";
+import { ConfigurationError } from "../core/config";
+import { LockConflictError } from "../core/lock";
+import { FixedClock, SequenceUuid } from "./helpers";
+
+const PATH = "/v1/internal/auth";
+
+function deps(
+  internalAuth?: PostDependencies["internalAuth"],
+): PostDependencies {
+  return {
+    clock: new FixedClock(),
+    uuidGenerator: new SequenceUuid(),
+    internalAuth,
+  };
+}
+
+function jsonBody(value: unknown): { type: string; contents: string } {
+  return { type: "application/json", contents: JSON.stringify(value) };
+}
+
+const validOuter = {
+  operation: "validate_session" as const,
+  envelope: { session_token: "x".repeat(43) },
+};
+
+describe("Phase 03C1A internal-auth ingress", () => {
+  it("dispatches an allowed operation and returns a success envelope", () => {
+    let received: unknown;
+    const response = handlePost(
+      { pathInfo: PATH, postData: jsonBody(validOuter) },
+      deps((operation, envelope) => {
+        received = { operation, envelope };
+        return { userId: "u1", role: "Agent", sessionId: "s1" };
+      }),
+    );
+    expect(received).toEqual({
+      operation: "validate_session",
+      envelope: validOuter.envelope,
+    });
+    expect(response).toMatchObject({
+      ok: true,
+      data: { userId: "u1", role: "Agent", sessionId: "s1" },
+    });
+  });
+
+  it("falls through to the frozen NOT_FOUND behavior for any other path", () => {
+    const response = handlePost(
+      { pathInfo: "/v1/other", postData: jsonBody(validOuter) },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+  });
+
+  it("rejects a request with missing postData", () => {
+    const response = handlePost(
+      { pathInfo: PATH },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it("accepts application/json with a charset parameter", () => {
+    const response = handlePost(
+      {
+        pathInfo: PATH,
+        postData: {
+          type: "application/json; charset=utf-8",
+          contents: JSON.stringify(validOuter),
+        },
+      },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({ ok: true });
+  });
+
+  it("rejects an unsupported content type", () => {
+    const response = handlePost(
+      {
+        pathInfo: PATH,
+        postData: { type: "text/plain", contents: JSON.stringify(validOuter) },
+      },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it("rejects a missing content type", () => {
+    const response = handlePost(
+      { pathInfo: PATH, postData: { contents: JSON.stringify(validOuter) } },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it("rejects malformed JSON", () => {
+    const response = handlePost(
+      { pathInfo: PATH, postData: { type: "application/json", contents: "{" } },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it("rejects a missing outer key", () => {
+    const response = handlePost(
+      {
+        pathInfo: PATH,
+        postData: jsonBody({ operation: "logout" }),
+      },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it("rejects an extra outer key", () => {
+    const response = handlePost(
+      {
+        pathInfo: PATH,
+        postData: jsonBody({ ...validOuter, extra: true }),
+      },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it("rejects a non-string operation", () => {
+    const response = handlePost(
+      {
+        pathInfo: PATH,
+        postData: jsonBody({ operation: 1, envelope: {} }),
+      },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: "AUTH_DENIED" },
+    });
+  });
+
+  it("rejects a non-object envelope", () => {
+    const response = handlePost(
+      {
+        pathInfo: PATH,
+        postData: jsonBody({ operation: "logout", envelope: "not-an-object" }),
+      },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  const disallowed = [
+    "rotate_session",
+    "revoke_session",
+    "bootstrapSchema",
+    "migrateAuthSchemaPhase03A",
+    "reconcileAuthAuditPhase03B",
+    "runPhase03BAcceptanceSuite",
+    "cleanupPhase03BAcceptanceData",
+  ];
+  for (const operation of disallowed) {
+    it(`rejects the disallowed operation "${operation}" before any dispatch`, () => {
+      let dispatched = false;
+      const response = handlePost(
+        {
+          pathInfo: PATH,
+          postData: jsonBody({ operation, envelope: {} }),
+        },
+        deps(() => {
+          dispatched = true;
+          return {};
+        }),
+      );
+      expect(dispatched).toBe(false);
+      expect(response).toMatchObject({
+        ok: false,
+        error: { code: "AUTH_DENIED" },
+      });
+    });
+  }
+
+  it("accepts a body at exactly the 16 KiB UTF-8 boundary", () => {
+    const filler = "a".repeat(16 * 1024 - 60);
+    const outer = {
+      operation: "logout" as const,
+      envelope: { padding: filler },
+    };
+    const contents = JSON.stringify(outer);
+    expect(Buffer.byteLength(contents, "utf8")).toBeLessThanOrEqual(16 * 1024);
+    const response = handlePost(
+      { pathInfo: PATH, postData: { type: "application/json", contents } },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({ ok: true });
+  });
+
+  it("rejects a body one byte over the 16 KiB UTF-8 boundary using multi-byte characters", () => {
+    // Each "é" is 2 UTF-8 bytes but 1 UTF-16 code unit: this proves byte
+    // length, not string .length, is what is enforced.
+    const filler = "é".repeat(9000);
+    const outer = {
+      operation: "logout" as const,
+      envelope: { padding: filler },
+    };
+    const contents = JSON.stringify(outer);
+    expect(Buffer.byteLength(contents, "utf8")).toBeGreaterThan(16 * 1024);
+    const response = handlePost(
+      { pathInfo: PATH, postData: { type: "application/json", contents } },
+      deps(() => ({})),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it("classifies AuthDenied and EnvelopeError from the dispatcher as AUTH_DENIED", () => {
+    for (const error of [new AuthDenied(), new EnvelopeError()]) {
+      const response = handlePost(
+        { pathInfo: PATH, postData: jsonBody(validOuter) },
+        deps(() => {
+          throw error;
+        }),
+      );
+      expect(response).toMatchObject({
+        ok: false,
+        error: { code: "AUTH_DENIED" },
+      });
+    }
+  });
+
+  it("classifies a lock conflict from the dispatcher as CONFLICT", () => {
+    const response = handlePost(
+      { pathInfo: PATH, postData: jsonBody(validOuter) },
+      deps(() => {
+        throw new LockConflictError();
+      }),
+    );
+    expect(response).toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+  });
+
+  it("classifies configuration and unexpected dispatcher failures as INTERNAL_ERROR without leaking the raw error", () => {
+    const secretMessage = "SPREADSHEET_ID=super-secret-value";
+    for (const error of [new ConfigurationError(), new Error(secretMessage)]) {
+      const response = handlePost(
+        { pathInfo: PATH, postData: jsonBody(validOuter) },
+        deps(() => {
+          throw error;
+        }),
+      );
+      expect(response).toMatchObject({
+        ok: false,
+        error: { code: "INTERNAL_ERROR" },
+      });
+      expect(JSON.stringify(response)).not.toContain(secretMessage);
+      expect(JSON.stringify(response)).not.toContain("super-secret-value");
+    }
+  });
+
+  it("never leaks the request body or envelope contents into a failure response", () => {
+    const secretPayload = { session_token: "top-secret-canary-value" };
+    const response = handlePost(
+      {
+        pathInfo: PATH,
+        postData: jsonBody({ operation: "logout", envelope: secretPayload }),
+      },
+      deps(() => {
+        throw new Error("boom: top-secret-canary-value");
+      }),
+    );
+    expect(JSON.stringify(response)).not.toContain("top-secret-canary-value");
+  });
+});

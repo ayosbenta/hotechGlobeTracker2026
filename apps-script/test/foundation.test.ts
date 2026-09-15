@@ -59,7 +59,7 @@ describe("response and API envelopes", () => {
     expect(serialize(failed)).not.toContain("secret-value");
   });
 
-  it("returns only safe NOT_FOUND envelopes for unsupported routes and all POSTs", () => {
+  it("returns only safe NOT_FOUND envelopes for unsupported GET routes and POSTs without the internal-auth route wired", () => {
     const dependencies = {
       clock,
       uuidGenerator: new SequenceUuid(),
@@ -72,6 +72,12 @@ describe("response and API envelopes", () => {
       error: { code: "NOT_FOUND" },
     });
     expect(handlePost({}, dependencies)).toMatchObject({
+      ok: false,
+      error: { code: "NOT_FOUND" },
+    });
+    expect(
+      handlePost({ pathInfo: "/v1/internal/auth" }, dependencies),
+    ).toMatchObject({
       ok: false,
       error: { code: "NOT_FOUND" },
     });

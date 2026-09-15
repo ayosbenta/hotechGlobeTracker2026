@@ -11,7 +11,11 @@ function fail(message) {
 }
 
 function globalFunctionBody(code, functionName) {
-  const signature = new RegExp(`function ${functionName}\\(e?\\) \\{`, "g");
+  // Matches the first definition, which is the real bundled implementation
+  // inside the IIFE; a later same-named footer delegator (e.g.
+  // `function doPost(e) { return HotechGlobeTracker.doPost(e); }`) is
+  // intentionally not matched here.
+  const signature = new RegExp(`function ${functionName}\\(\\w*\\) \\{`, "g");
   const match = signature.exec(code);
   if (match === null) fail(`missing global ${functionName} entrypoint`);
 
@@ -115,20 +119,47 @@ for (const entrypoint of ["doGet", "doPost"]) {
   const body = globalFunctionBody(code, entrypoint);
   for (const forbidden of [
     "bootstrapSchema",
-    "executeInternalAuth",
     "runPhase03BAcceptanceSuite",
     "cleanupPhase03BAcceptanceData",
     "reconcileAuthAuditPhase03B",
+    "migrateAuthSchemaPhase03A",
   ]) {
     if (body.includes(forbidden))
       fail(`${entrypoint} must not route to ${forbidden}`);
   }
 }
 
+// doGet remains the frozen, unauthenticated health-only route: it must never
+// reach the internal-auth dispatcher or any operation-specific internal path.
+const doGetBody = globalFunctionBody(code, "doGet");
 if (
-  /\/internal\/v1\/auth\//.test(globalFunctionBody(code, "doGet")) ||
-  /\/internal\/v1\/auth\//.test(globalFunctionBody(code, "doPost"))
+  doGetBody.includes("executeInternalAuth") ||
+  /\/internal\/v1\/auth\//.test(doGetBody)
 )
-  fail("public auth routes are present");
+  fail("doGet must not route to internal auth");
+
+// doPost's only routed operation is the internal-auth ingress at
+// /v1/internal/auth, calling the frozen executeInternalAuthPhase03B entrypoint
+// (which itself calls the frozen executeInternalAuth dispatcher). It must
+// never expose rotate_session/revoke_session or perform dynamic/caller-keyed
+// function dispatch.
+const doPostBody = globalFunctionBody(code, "doPost");
+if (!doPostBody.includes("executeInternalAuthPhase03B"))
+  fail(
+    "doPost must route the internal-auth ingress through executeInternalAuthPhase03B",
+  );
+if (
+  !code.includes('"/v1/internal/auth"') &&
+  !code.includes("'/v1/internal/auth'")
+)
+  fail("the internal-auth ingress route /v1/internal/auth is missing");
+for (const forbiddenOperation of ["rotate_session", "revoke_session"]) {
+  if (doPostBody.includes(forbiddenOperation))
+    fail(
+      `doPost must not reference the editor-only operation ${forbiddenOperation}`,
+    );
+}
+if (/global(?:This)?\s*\[/.test(doPostBody) || /\bwindow\s*\[/.test(doPostBody))
+  fail("doPost must not perform dynamic/caller-keyed function dispatch");
 
 console.log("Apps Script artifact checks passed");

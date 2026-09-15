@@ -19,7 +19,10 @@ export type ErrorCode =
   | "NOT_FOUND"
   | "CONFLICT"
   | "RATE_LIMITED"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  // Reserved for the Phase 03C1A internal-auth ingress only: signals that the
+  // frozen Phase 03B envelope/session verification denied the request.
+  | "AUTH_DENIED";
 
 export interface Clock {
   now(): Date;

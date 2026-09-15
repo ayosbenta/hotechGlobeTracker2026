@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   AppsScriptDeniedError,
@@ -127,11 +127,50 @@ describe("Apps Script internal client", () => {
     );
   });
 
-  it("throws AppsScriptDeniedError on a malformed success body", async () => {
+  it("throws AppsScriptUnavailableError on a malformed success body", async () => {
     const fetcher = async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ ok: false }),
+      json: async () => ({ ok: true, data: "not-an-object" }),
+    });
+    const client = createAppsScriptAuthClient(
+      config,
+      nodeCryptoAdapter,
+      clock,
+      fetcher,
+    );
+    await expect(client.execute("logout", {})).rejects.toThrow(
+      AppsScriptUnavailableError,
+    );
+  });
+
+  it("throws AppsScriptUnavailableError on non-JSON success", async () => {
+    const fetcher = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new Error("not json");
+      },
+    });
+    const client = createAppsScriptAuthClient(
+      config,
+      nodeCryptoAdapter,
+      clock,
+      fetcher,
+    );
+    await expect(client.execute("logout", {})).rejects.toThrow(
+      AppsScriptUnavailableError,
+    );
+  });
+
+  it("maps an HTTP-200 AUTH_DENIED failure envelope to AppsScriptDeniedError", async () => {
+    const fetcher = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: false,
+        error: { code: "AUTH_DENIED", message: "denied" },
+      }),
     });
     const client = createAppsScriptAuthClient(
       config,
@@ -142,5 +181,95 @@ describe("Apps Script internal client", () => {
     await expect(client.execute("logout", {})).rejects.toThrow(
       AppsScriptDeniedError,
     );
+  });
+
+  it("maps an HTTP-200 CONFLICT failure envelope to AppsScriptUnavailableError", async () => {
+    const fetcher = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: false,
+        error: { code: "CONFLICT", message: "conflict" },
+      }),
+    });
+    const client = createAppsScriptAuthClient(
+      config,
+      nodeCryptoAdapter,
+      clock,
+      fetcher,
+    );
+    await expect(client.execute("logout", {})).rejects.toThrow(
+      AppsScriptUnavailableError,
+    );
+  });
+
+  it("maps an HTTP-200 INTERNAL_ERROR failure envelope to AppsScriptUnavailableError", async () => {
+    const fetcher = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: false,
+        error: { code: "INTERNAL_ERROR", message: "internal" },
+      }),
+    });
+    const client = createAppsScriptAuthClient(
+      config,
+      nodeCryptoAdapter,
+      clock,
+      fetcher,
+    );
+    await expect(client.execute("logout", {})).rejects.toThrow(
+      AppsScriptUnavailableError,
+    );
+  });
+
+  it("maps an unrecognized HTTP-200 failure code to AppsScriptUnavailableError", async () => {
+    const fetcher = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: false, error: { code: "VALIDATION_ERROR" } }),
+    });
+    const client = createAppsScriptAuthClient(
+      config,
+      nodeCryptoAdapter,
+      clock,
+      fetcher,
+    );
+    await expect(client.execute("logout", {})).rejects.toThrow(
+      AppsScriptUnavailableError,
+    );
+  });
+
+  it("aborts and throws AppsScriptUnavailableError after the 12-second timeout with no retry", async () => {
+    let callCount = 0;
+    const fetcher = (
+      _url: string,
+      init: { signal?: AbortSignal },
+    ): Promise<{ ok: boolean; status: number; json(): Promise<unknown> }> => {
+      callCount += 1;
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          reject(new Error("aborted"));
+        });
+      });
+    };
+    const client = createAppsScriptAuthClient(
+      config,
+      nodeCryptoAdapter,
+      clock,
+      fetcher,
+    );
+    vi.useFakeTimers();
+    try {
+      const pending = client.execute("logout", {});
+      const assertion = expect(pending).rejects.toThrow(
+        AppsScriptUnavailableError,
+      );
+      await vi.advanceTimersByTimeAsync(12_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(callCount).toBe(1);
   });
 });
