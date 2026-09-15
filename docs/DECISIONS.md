@@ -33,12 +33,13 @@
 
 | D-027 | 2026-09-14 | Apps Script must not generate Phase 03B authentication token material: it has no `Utilities.getRandomBytes()` API, and UUID/Math.random are not substitutes. Phase 03C's trusted BFF will generate session, CSRF, and JTI material; Phase 03B validates and hashes it. The isolated editor suite alone uses deterministic non-secret test vectors. |
 | D-028 | 2026-09-14 | Owner approved and froze Phase 03B Apps Script Auth and Session Domain. Final isolated Google Apps Script V8 acceptance passed 10/10 checks with synthetic cleanup true. The isolated project was not deployed and acceptance-mode properties were removed. The resolved unsupported-randomness and CSRF-handoff harness defects are recorded; isolated test secrets must never be reused in production. |
+| D-029 | 2026-09-15 | Owner approved the detailed Phase 03C authentication architecture recorded in `docs/PHASE_03C_AUTH_PLAN.md` as binding: Google Identity Services/OIDC only, with no custom passwords or public signup; a same-origin Vercel BFF; Apps Script remains authoritative for sessions and RBAC. Session limits are fixed at 30-minute idle timeout, 8-hour absolute timeout, and 5-minute `last_seen` throttle. This closes the previously open "authentication method and session duration" decision. |
+| D-030 | 2026-09-15 | Phase 03C is formally split into three bounded batches: Phase 03C1 (Vercel BFF Authentication Backend), Phase 03C2 (GIS Login UI and Frontend Authentication Guards), and Phase 03D (Isolated Vercel Preview End-to-End Security QA). Phase 03C1 is the next unimplemented batch; `docs/NEXT_TASK.md` tracks its bounded scope. |
 
 ## Open decisions
 
 - Exact Globe plans and current prices
 - Whether Processor uses only Admin assignment or may claim from a shared queue
-- Authentication method and session duration
 - Allowed Agent edits after submission
 - Final production domain and Google Workspace ownership
 
