@@ -50,6 +50,83 @@ async function mockAuthenticatedSession(
   );
 }
 
+/**
+ * MVP-3 wires the frozen dashboard to live /api/applications (and, for
+ * Admin, /api/plans + /api/users for quick-stat counts) data. There is no
+ * live BFF/Apps Script backing this harness, so those routes are stubbed
+ * with a small fixed dataset -- this never touches, weakens, or bypasses
+ * the real fetch/aggregation code, it only fakes the network responses the
+ * page reads, exactly as mockAuthenticatedSession does for /api/auth/me.
+ */
+async function mockDashboardData(page: Page): Promise<void> {
+  await page.route("**/api/applications", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        requestId: "e2e-request",
+        data: {
+          applications: [
+            {
+              applicationId: "a1",
+              customerFullName: "Maria Santos",
+              completeAddress: "123 Rizal St",
+              cityMunicipality: "Quezon City",
+              province: "Metro Manila",
+              agentId: "agent-1",
+              processorId: "proc-1",
+              currentStatus: "Installed",
+              planNameSnapshot: "GFiber Unli 1499",
+              submittedAt: "2025-04-22T00:00:00.000Z",
+              version: 3,
+            },
+            {
+              applicationId: "a2",
+              customerFullName: "Ramon Villanueva",
+              completeAddress: "45 Bonifacio Ave",
+              cityMunicipality: "Makati City",
+              province: "Metro Manila",
+              agentId: "agent-1",
+              processorId: "proc-1",
+              currentStatus: "Ongoing",
+              planNameSnapshot: "GFiber Unli 1699",
+              submittedAt: "2025-04-21T00:00:00.000Z",
+              version: 2,
+            },
+          ],
+          nextCursor: null,
+        },
+        meta: { timestamp: new Date().toISOString(), nextCursor: null },
+      }),
+    }),
+  );
+  await page.route("**/api/plans", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        requestId: "e2e-request",
+        data: { plans: [], nextCursor: null },
+        meta: { timestamp: new Date().toISOString(), nextCursor: null },
+      }),
+    }),
+  );
+  await page.route("**/api/users", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        requestId: "e2e-request",
+        data: { users: [], nextCursor: null },
+        meta: { timestamp: new Date().toISOString(), nextCursor: null },
+      }),
+    }),
+  );
+}
+
 for (const dashboard of dashboards) {
   for (const viewport of viewports) {
     test(`${dashboard.route} has no horizontal overflow at ${viewport.width}px`, async ({
@@ -62,6 +139,7 @@ for (const dashboard of dashboards) {
       });
 
       await mockAuthenticatedSession(page, dashboard.role);
+      await mockDashboardData(page);
       await page.setViewportSize(viewport);
       await page.goto(dashboard.route);
 
@@ -92,6 +170,7 @@ for (const redirect of ["/admin", "/agent", "/processor"] as const) {
     page,
   }) => {
     await mockAuthenticatedSession(page, role);
+    await mockDashboardData(page);
     await page.goto(redirect);
     await expect(page).toHaveURL(new RegExp(`${redirect}/dashboard$`));
   });

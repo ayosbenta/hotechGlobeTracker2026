@@ -1,4 +1,4 @@
-# Next Task — MVP-2: Core Tracker CRUD (MVP-2A-2F implemented; MVP-3 not started)
+# Next Task — MVP-2/MVP-3 (MVP-2A-2F and MVP-3 implemented; MVP-4 not started)
 
 Roadmap reference: **`docs/MVP_COMPLETION_PLAN.md`** — Owner Approved (2026-09-15), along with
 decisions D-035/D-036.
@@ -8,10 +8,12 @@ versioning, status-transition matrix, audit primitives — see `apps-script/core
 `versioning.ts`, `lock.ts`, `audit.ts`, `status-transitions.ts`), and the frozen Phase 03A/03B/03C1
 authentication chain MVP-1 now fronts.
 
-Status: **MVP-2A through MVP-2F implemented locally as checkpoint commits (2026-09-16); not Owner
-Approved.** MVP-2 Core Tracker CRUD is now fully implemented (backend/API-only, per §K). MVP-3
-Dashboard Live Data is next and not started. See "MVP-2 — Core Tracker CRUD (planned)" below for
-the full specification, and the per-batch result sections for what was actually built and verified.
+Status: **MVP-2A through MVP-2F and MVP-3 (Dashboard Live Data) all implemented locally as
+checkpoint commits (2026-09-16); not Owner Approved.** MVP-2 Core Tracker CRUD is fully implemented
+(backend/API-only, per §K), and MVP-3 wires the frozen dashboards to that live data (D-045). MVP-4
+Final Isolated Integration QA is next and not started. See "MVP-2 — Core Tracker CRUD (planned)"
+below for the full specification, and the per-batch result sections for what was actually built and
+verified. MVP-3's own result section is recorded at the end of this file.
 
 ## Roadmap change (2026-09-15, Owner Approved)
 
@@ -825,3 +827,68 @@ passes. Old Phase 03C2 is superseded by MVP-1 and old Phase 03D by MVP-4.
   recorded above. Committed locally (not pushed) as `feat(mvp-2a): implement plans crud foundation`,
   `feat(mvp-2b): implement user administration`, `feat(mvp-2c): implement applications crud
   foundation`, and `test(mvp-2f): verify core tracker workflows`.
+- **MVP-3 — Dashboard Live Data: implemented locally (checkpoint commit, not Owner Approved,
+  D-045).** Wires the frozen Admin/Agent/Processor dashboards to live `/api/applications`
+  (and Admin-only `/api/users`) data via a new `useDashboardData` hook, with zero layout/palette/
+  navigation change to any frozen dashboard file. See "MVP-3 result" below. Committed locally (not
+  pushed) as `feat(mvp-3): connect approved dashboards to live data`.
+
+## MVP-3 result (2026-09-16)
+
+Implemented and locally verified as a checkpoint commit (not Owner Approved — see D-045). Read
+`docs/UI_DASHBOARD_CONTRACT.md` and the existing frozen `src/components/dashboard/*` /
+`src/pages/dashboard-page.tsx` files before making any change, per this batch's own instructions.
+Summary:
+
+- `src/types/application.ts` (new): the frontend's own `ApplicationStatus` union, matching the
+  frozen Apps Script schema's `STATUS_VALUES` exactly.
+- `src/data/applications-api.ts` (new): a typed BFF client mirroring `src/auth/api-client.ts`'s
+  `request()` pattern — `credentials: "same-origin"`, safe error-code mapping, never trusting an
+  unrecognized server error code. `fetchAllApplications`/`fetchAllUsers` page through
+  `GET /api/applications`/`GET /api/users` via the existing cursor field, capped at 20 pages.
+- `src/data/use-dashboard-data.ts` (new): `useDashboardData(role)` fetches applications (and, for
+  Admin only, users, for quick-stat agent/processor counts — a failure there never blocks the
+  applications data) and derives the exact `Metric[]`/`StatusBreakdown[]`/table-row shapes the
+  frozen dashboard components already render. State transitions `loading` → `empty` (zero
+  applications) or `populated`, or `error` on any fetch failure. Row-level scoping (Agent
+  own-applications-only, Processor assigned-only) is enforced authoritatively by Apps Script from
+  the session; this hook never re-filters or trusts a client-side identity for authorization.
+- `src/pages/dashboard-page.tsx`: `AdminDashboard`/`AgentDashboard`/`ProcessorDashboard` now accept
+  the live `DashboardDataResult` as a prop instead of importing static mocks for metrics, status
+  breakdown, and table rows. The `?state=` query param (used by Playwright/manual QA) still wins
+  over the live-derived state when present, preserving the existing `resolveDashboardState`
+  mechanism unchanged; otherwise the state comes from the live fetch. No layout, card order,
+  navigation, or palette was touched — every existing dashboard UI component
+  (`MetricCard`/`StatusDonut`/`StatusBadge`/tables/etc.) is reused unchanged.
+- **Known limitation, explicitly accepted for this batch:** the Admin "Monthly Applications" trend
+  chart is now derived live (grouped by submission month), but the Agent's multi-status
+  "My Applications" trend and the Processor's daily productivity bar chart remain on illustrative
+  fixture data, because both require server-side time-series aggregation the API does not yet
+  expose. This is documented, not silently mocked in the shipped path — a future endpoint can
+  replace it without further UI change.
+- `e2e/dashboard-responsive.spec.ts`: added a `mockDashboardData()` route stub for
+  `/api/applications`/`/api/plans`/`/api/users` (small fixed dataset), applied alongside the
+  existing `/api/auth/me` stub, since the dashboard now makes real fetch calls the harness has no
+  live backend for. This updates the stub to match the real request shape the app now makes — it
+  does not loosen any assertion.
+- `src/app.test.tsx`: the two tests that render an authenticated dashboard now route their mocked
+  `fetch` by URL (`fetchRouter`) instead of returning one flat `/api/auth/me`-shaped response for
+  every call, since the dashboard now also calls `/api/applications`.
+- `src/data/use-dashboard-data.test.ts` (new): 7 tests covering the loading → populated/empty/error
+  transitions, pagination via `nextCursor`, and Admin-only agent/processor quick-stat counts.
+
+**Verification (local; no live external resource used):** 398/398 total unit tests (was 391, +7 new
+`useDashboardData` tests), `npm run format`/`format:check`, `npm run lint` (0 errors, same one
+pre-existing warning), `npm run typecheck`, `npm run gas:build`/`gas:check`/`npm run gas:test`
+(unaffected — no Apps Script/server file was touched), `npm run build` (production bundle scanned
+clean of secrets), `npx playwright test` (19/19 passing, after adding the three route stubs above),
+a credential/secret grep over the diff (clean), and `git diff --check` (clean, only benign
+CRLF-conversion warnings). Committed locally (not pushed) as
+`feat(mvp-3): connect approved dashboards to live data`.
+
+**Known limitations:** local/mocked only — no live Apps Script deployment, live Google/Upstash, or
+Vercel Preview was used; that remains MVP-4. Trend-chart time-series data remains illustrative for
+Agent/Processor (see above). No write/mutation UI (create/edit application forms, Processor
+transition actions, Admin assignment UI) was added — MVP-3 is read-only dashboard data per its
+scope; that interactive surface remains future work beyond the five-batch MVP roadmap's explicit
+scope.

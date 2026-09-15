@@ -30,21 +30,14 @@ import {
   TableAction,
 } from "@/components/dashboard/dashboard-ui";
 import { Button } from "@/components/ui/button";
+import { agentTrend, processorProductivity } from "@/data/dashboard-mocks";
 import {
-  adminApplications,
-  adminMetrics,
-  adminStatus,
-  adminTrend,
-  agentMetrics,
-  agentStatus,
-  agentSubmissions,
-  agentTrend,
-  processorMetrics,
-  processorProductivity,
-  processorQueue,
-} from "@/data/dashboard-mocks";
+  useDashboardData,
+  type DashboardApplicationRow,
+  type DashboardDataResult,
+} from "@/data/use-dashboard-data";
 import { cn } from "@/lib/utils";
-import type { TrendPoint } from "@/types/dashboard";
+import type { Metric, TrendPoint } from "@/types/dashboard";
 import { resolveDashboardState } from "@/lib/dashboard-state";
 import type { Role } from "@/types/roles";
 
@@ -130,14 +123,39 @@ function TrendChart({
   );
 }
 
-function AdminDashboard() {
+/**
+ * Builds a monthly trend series from live application submission dates.
+ * This is a data-source swap of the mocked "Monthly Applications" chart
+ * only -- same shape, same chart component, no layout change.
+ */
+function monthlyTrendFromRows(
+  rows: readonly DashboardApplicationRow[],
+): readonly TrendPoint[] {
+  const byMonth = new Map<string, number>();
+  for (const row of rows) {
+    const parsed = new Date(row.date);
+    if (Number.isNaN(parsed.getTime())) continue;
+    const label = parsed.toLocaleDateString("en-US", {
+      month: "short",
+      year: "numeric",
+    });
+    byMonth.set(label, (byMonth.get(label) ?? 0) + 1);
+  }
+  return Array.from(byMonth.entries()).map(([label, applications]) => ({
+    label,
+    applications,
+  }));
+}
+
+function AdminDashboard({ data }: { readonly data: DashboardDataResult }) {
+  const trend = monthlyTrendFromRows(data.rows);
   return (
     <>
       <PageTitle description="Here's what's happening with your applications today.">
         Good morning, Admin!
       </PageTitle>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {adminMetrics.map((metric) => (
+        {data.metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
@@ -145,11 +163,11 @@ function AdminDashboard() {
       <div className="mt-5 grid gap-5 xl:grid-cols-5">
         <DashboardCard className="min-w-0 xl:col-span-3">
           <SectionHeading
-            actions={<SelectAffordance label="Last 6 Months" />}
+            actions={<SelectAffordance label="Recent Activity" />}
             title="Monthly Applications"
           />
           <TrendChart
-            data={adminTrend}
+            data={trend}
             lines={[{ dataKey: "applications", color: dashboardColors.blue }]}
           />
         </DashboardCard>
@@ -158,7 +176,7 @@ function AdminDashboard() {
             actions={<SelectAffordance label="All Time" />}
             title="Application Status"
           />
-          <StatusDonut data={adminStatus} />
+          <StatusDonut data={data.statusBreakdown} />
         </DashboardCard>
       </div>
       <DashboardCard className="mt-5 overflow-hidden">
@@ -181,8 +199,8 @@ function AdminDashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e4edf7] text-[#24395f]">
-              {adminApplications.map((application, index) => (
-                <tr key={application.customer}>
+              {data.rows.map((application, index) => (
+                <tr key={application.applicationId}>
                   <td className="px-4 py-3.5 text-[#5b7196]">{index + 1}</td>
                   <td className="px-4 py-3.5 font-medium">
                     {application.customer}
@@ -190,8 +208,10 @@ function AdminDashboard() {
                   <td className="px-4 py-3.5 text-[#536b91]">
                     {application.address}
                   </td>
-                  <td className="px-4 py-3.5">{application.agent}</td>
-                  <td className="px-4 py-3.5">{application.processor}</td>
+                  <td className="px-4 py-3.5">{application.agentId || "—"}</td>
+                  <td className="px-4 py-3.5">
+                    {application.processorId || "Unassigned"}
+                  </td>
                   <td className="px-4 py-3.5">
                     <StatusBadge status={application.status} />
                   </td>
@@ -207,8 +227,8 @@ function AdminDashboard() {
           </table>
         </div>
         <div className="divide-y divide-[#e4edf7] md:hidden">
-          {adminApplications.map((application) => (
-            <article className="p-4" key={application.customer}>
+          {data.rows.map((application) => (
+            <article className="p-4" key={application.applicationId}>
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="font-bold">{application.customer}</h3>
@@ -221,12 +241,14 @@ function AdminDashboard() {
               <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
                 <div>
                   <dt className="text-[#7183a3]">Agent</dt>
-                  <dd className="mt-0.5 font-medium">{application.agent}</dd>
+                  <dd className="mt-0.5 font-medium">
+                    {application.agentId || "—"}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-[#7183a3]">Processor</dt>
                   <dd className="mt-0.5 font-medium">
-                    {application.processor}
+                    {application.processorId || "Unassigned"}
                   </dd>
                 </div>
                 <div>
@@ -242,7 +264,7 @@ function AdminDashboard() {
   );
 }
 
-function AgentDashboard() {
+function AgentDashboard({ data }: { readonly data: DashboardDataResult }) {
   return (
     <>
       <PageTitle
@@ -260,7 +282,7 @@ function AgentDashboard() {
         Good morning, Maria!
       </PageTitle>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {agentMetrics.map((metric) => (
+        {data.metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
@@ -270,7 +292,7 @@ function AgentDashboard() {
             eyebrow="Status breakdown of your applications"
             title="Application Progress"
           />
-          <StatusDonut data={agentStatus} />
+          <StatusDonut data={data.statusBreakdown} />
         </DashboardCard>
         <DashboardCard className="min-w-0 xl:col-span-3">
           <SectionHeading
@@ -278,6 +300,10 @@ function AgentDashboard() {
             eyebrow="Track the status of your submissions"
             title="My Applications"
           />
+          {/* Historical multi-status trend requires server-side time-series
+              aggregation not yet exposed by the API; kept on illustrative
+              fixture data until that endpoint exists (documented MVP-3
+              limitation, not a mocked production data path). */}
           <TrendChart
             data={agentTrend}
             lines={[
@@ -316,11 +342,11 @@ function AgentDashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e4edf7] text-[#24395f]">
-              {agentSubmissions.map((submission, index) => (
-                <tr key={submission.applicant}>
+              {data.rows.map((submission, index) => (
+                <tr key={submission.applicationId}>
                   <td className="px-4 py-3.5 text-[#5b7196]">{index + 1}</td>
                   <td className="px-4 py-3.5 font-medium">
-                    {submission.applicant}
+                    {submission.customer}
                   </td>
                   <td className="px-4 py-3.5 text-[#536b91]">
                     {submission.plan}
@@ -340,13 +366,13 @@ function AgentDashboard() {
           </table>
         </div>
         <div className="divide-y divide-[#e4edf7] md:hidden">
-          {agentSubmissions.map((submission) => (
+          {data.rows.map((submission) => (
             <article
               className="flex items-start justify-between gap-3 p-4"
-              key={submission.applicant}
+              key={submission.applicationId}
             >
               <div>
-                <h3 className="font-bold">{submission.applicant}</h3>
+                <h3 className="font-bold">{submission.customer}</h3>
                 <p className="mt-1 text-sm text-[#617497]">{submission.plan}</p>
                 <p className="mt-2 text-xs text-[#7183a3]">
                   Submitted {submission.date}
@@ -361,7 +387,8 @@ function AgentDashboard() {
   );
 }
 
-function ProcessorDashboard() {
+function ProcessorDashboard({ data }: { readonly data: DashboardDataResult }) {
+  const quickStatMetrics: readonly Metric[] = data.metrics.slice(1);
   return (
     <>
       <PageTitle
@@ -373,7 +400,13 @@ function ProcessorDashboard() {
                 className="mr-2 inline size-5 text-blue-700"
               />
               <span className="font-semibold">Today</span>
-              <span className="ml-2">Apr 28, 2025</span>
+              <span className="ml-2">
+                {new Date().toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </span>
             </div>
             <p className="hidden border-b-2 border-blue-400 pb-2 text-sm font-medium italic text-blue-600 xl:block">
               More connections.
@@ -387,7 +420,7 @@ function ProcessorDashboard() {
         Dashboard
       </PageTitle>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {processorMetrics.map((metric) => (
+        {data.metrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </div>
@@ -424,35 +457,28 @@ function ProcessorDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#e4edf7] text-[#23385e]">
-                {processorQueue.map((item, index) => (
-                  <tr key={item.applicant}>
+                {data.rows.map((item, index) => (
+                  <tr key={item.applicationId}>
                     <td className="px-3 py-3 text-[#617497]">{index + 1}</td>
                     <td className="px-3 py-3">
-                      <span className="block font-bold">{item.applicant}</span>
+                      <span className="block font-bold">{item.customer}</span>
                       <span className="block pt-1 text-[#7083a3]">
-                        {item.city}
+                        {item.address}
                       </span>
                     </td>
                     <td className="px-3 py-3">
-                      <span className="block font-medium">{item.agent}</span>
-                      <span className="block pt-1 text-[#7083a3]">
-                        {item.partner}
+                      <span className="block font-medium">
+                        {item.agentId || "—"}
                       </span>
                     </td>
                     <td className="px-3 py-3">
                       <span className="block font-medium">{item.plan}</span>
-                      <span className="block pt-1 text-[#7083a3]">
-                        {item.speed}
-                      </span>
                     </td>
                     <td className="px-3 py-3">
                       <StatusBadge status={item.status} />
                     </td>
                     <td className="px-3 py-3">
                       <span className="block">{item.date}</span>
-                      <span className="block pt-1 text-[#7083a3]">
-                        {item.time}
-                      </span>
                     </td>
                     <td className="px-3 py-3">
                       <Button
@@ -468,13 +494,13 @@ function ProcessorDashboard() {
             </table>
           </div>
           <div className="divide-y divide-[#e4edf7] lg:hidden">
-            {processorQueue.map((item) => (
-              <article className="p-4" key={item.applicant}>
+            {data.rows.map((item) => (
+              <article className="p-4" key={item.applicationId}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="font-bold">{item.applicant}</h3>
+                    <h3 className="font-bold">{item.customer}</h3>
                     <p className="mt-1 text-xs text-[#667a9e]">
-                      {item.city} · {item.plan}
+                      {item.address} · {item.plan}
                     </p>
                   </div>
                   <StatusBadge status={item.status} />
@@ -482,7 +508,7 @@ function ProcessorDashboard() {
                 <p className="mt-3 text-xs text-[#60749a]">
                   Agent:{" "}
                   <span className="font-medium text-[#25395e]">
-                    {item.agent}
+                    {item.agentId || "—"}
                   </span>{" "}
                   · {item.date}
                 </p>
@@ -502,7 +528,9 @@ function ProcessorDashboard() {
             <div className="px-5 pb-2 sm:px-6">
               <div className="flex items-end justify-between">
                 <div>
-                  <p className="text-3xl font-bold">28</p>
+                  <p className="text-3xl font-bold">
+                    {data.metrics[0]?.value ?? "0"}
+                  </p>
                   <p className="mt-1 text-sm text-[#60749a]">
                     Applications Processed
                   </p>
@@ -516,6 +544,9 @@ function ProcessorDashboard() {
                 </p>
               </div>
             </div>
+            {/* Daily productivity time-series requires server-side
+                aggregation not yet exposed by the API; kept on illustrative
+                fixture data until that endpoint exists. */}
             <div className="h-[220px] px-2">
               <ResponsiveContainer height="100%" width="100%">
                 <BarChart
@@ -550,7 +581,7 @@ function ProcessorDashboard() {
           <DashboardCard>
             <SectionHeading title="Quick Stats" />
             <div className="grid grid-cols-2 divide-x divide-y divide-[#e6eef8] border-t border-[#e6eef8]">
-              {processorMetrics.slice(1).map((metric) => {
+              {quickStatMetrics.map((metric) => {
                 const Icon = metric.icon;
                 return (
                   <div className="p-4" key={metric.label}>
@@ -585,7 +616,15 @@ function ProcessorDashboard() {
 
 export function DashboardPage({ role }: DashboardPageProps) {
   const [searchParams] = useSearchParams();
-  const state = resolveDashboardState(searchParams.get("state"));
+  const previewState = searchParams.get("state");
+  const liveData = useDashboardData(role);
+  // A `?state=` query param always wins (manual QA/Playwright preview of the
+  // frozen loading/empty/error states); otherwise the state is derived from
+  // the live fetch itself.
+  const state =
+    previewState !== null
+      ? resolveDashboardState(previewState)
+      : liveData.state;
   const title =
     role === "admin"
       ? "Admin dashboard"
@@ -597,11 +636,11 @@ export function DashboardPage({ role }: DashboardPageProps) {
     <DashboardShell role={role}>
       {state === "populated" ? (
         role === "admin" ? (
-          <AdminDashboard />
+          <AdminDashboard data={liveData} />
         ) : role === "agent" ? (
-          <AgentDashboard />
+          <AgentDashboard data={liveData} />
         ) : (
-          <ProcessorDashboard />
+          <ProcessorDashboard data={liveData} />
         )
       ) : (
         <DashboardStateView state={state} title={title} />
