@@ -1,17 +1,22 @@
-# Next Task — MVP-1: Authentication Frontend (planned, not started)
+# Next Task — MVP-2: Core Tracker CRUD (planning only, not started)
 
-Roadmap reference: **`docs/MVP_COMPLETION_PLAN.md`** — proposed 2026-09-15 by owner change
-request, awaiting owner approval of the plan itself.
-Architecture reference: **`docs/PHASE_03C_AUTH_PLAN.md` — Owner Approved (2026-09-15), still
-binding for all authentication architecture.**
+Roadmap reference: **`docs/MVP_COMPLETION_PLAN.md`** — Owner Approved (2026-09-15), along with
+decisions D-035/D-036.
+Previous batch: **MVP-1 Authentication Frontend — Owner Approved and frozen (2026-09-16).**
+Frozen baseline reused by this batch: Phase 02 Sheets/Apps Script foundation (schema, locks,
+versioning, status-transition matrix, audit primitives — see `apps-script/core/schema.ts`,
+`versioning.ts`, `lock.ts`, `audit.ts`, `status-transitions.ts`), and the frozen Phase 03A/03B/03C1
+authentication chain MVP-1 now fronts.
 
-## Roadmap change (2026-09-15)
+Status: **Planning only. Not implemented.** See "MVP-2 — Core Tracker CRUD (planned)" below for
+the full specification required before any implementation begins.
 
-By owner change request, the remaining roadmap is consolidated into five MVP batches (MVP-1
-Authentication Frontend, MVP-2 Core Tracker CRUD, MVP-3 Dashboard Live Data, MVP-4 Final Isolated
-Integration QA, MVP-5 Production Release). Old Phase 03C2 becomes MVP-1; old Phase 03D is absorbed
-into MVP-4. See `docs/MVP_COMPLETION_PLAN.md` for the full status table, reconciliation and
-estimates.
+## Roadmap change (2026-09-15, Owner Approved)
+
+The remaining roadmap is consolidated into five MVP batches (MVP-1 Authentication Frontend, MVP-2
+Core Tracker CRUD, MVP-3 Dashboard Live Data, MVP-4 Final Isolated Integration QA, MVP-5
+Production Release). Old Phase 03C2 becomes MVP-1; old Phase 03D is absorbed into MVP-4. See
+`docs/MVP_COMPLETION_PLAN.md` for the full status table, reconciliation and estimates.
 
 **The manual Phase 03C1A isolated acceptance setup is stopped.** Live ingress acceptance is
 deferred and will be performed once, as part of MVP-4's single isolated integration QA, rather
@@ -25,20 +30,432 @@ MVP-4's isolated QA executes and passes its acceptance. Its implementation, test
 controls are preserved in full and must not be weakened:
 
 - The `POST /v1/internal/auth` ingress, its four-operation allowlist, and all ingress validation.
-- All 189 passing unit tests, including the 24 ingress tests and 17 acceptance-tooling tests.
+- All 189 passing unit tests at the time of its own commit, including the 24 ingress tests and 17
+  acceptance-tooling tests.
 - The `npm run acceptance:phase-03c1a` runner, its fail-closed config guards, and its sanitized
   output — to be used unchanged during MVP-4.
 
-The detailed Phase 03C1A implementation record is preserved below for review.
+Phase 03C1A and the MVP roadmap docs are committed locally (not pushed) as two separate commits:
+`feat(phase-03c1a): add internal auth ingress and acceptance tooling` and
+`docs(mvp): consolidate remaining implementation roadmap`. Neither commit changes Phase 03C1A's
+approval state.
+
+The detailed Phase 03C1A implementation record is preserved further below for review.
 
 ---
 
-## Next batch: MVP-1 — Authentication Frontend
+## MVP-2 — Core Tracker CRUD (planned)
 
-Not started. Scope, exit criteria and estimate are in `docs/MVP_COMPLETION_PLAN.md` §4. Summary:
-GIS login screen, browser auth provider/state, integration with the five existing `/api/auth/*`
-routes, canonical role redirects, protected role routes, and safe loading/inactive/locked/expired/
-error states — with no dashboard redesign.
+**Status: planning only. Not implemented. Not started.** This section is the specification that
+must be reviewed before any MVP-2 code is written, per `docs/MVP_COMPLETION_PLAN.md` §4.
+
+### Why this is split into six internal batches
+
+MVP-2 is the largest remaining batch (estimated 4–6 sessions in the roadmap). Splitting it keeps
+each batch reviewable and independently verifiable, and lets RBAC/versioning/audit patterns get
+proven once (MVP-2A) before being repeated across the remaining entity/role surfaces.
+
+| Batch | Scope | Depends on |
+| --- | --- | --- |
+| MVP-2A | Shared contracts, Apps Script repository layer, Admin Plans CRUD | MVP-1 (auth ingress pattern) |
+| MVP-2B | Admin Users/role assignments and account-status management | MVP-2A (repository layer) |
+| MVP-2C | Applications create/read/update foundation | MVP-2A, MVP-2B (agent/processor assignment needs Users) |
+| MVP-2D | Agent own-application workflow (create, view own) | MVP-2C |
+| MVP-2E | Processor queue/assignment/status transitions | MVP-2C, MVP-2D |
+| MVP-2F | Integration verification, audits, and regression across 2A–2E | MVP-2A..2E |
+
+Each batch ends in a working, independently testable slice; none is implemented until explicitly
+instructed, batch by batch.
+
+### Architecture: extending the frozen ingress, not replacing it
+
+MVP-2 reuses the **same** signed-envelope pattern Phase 03C1A established for auth, applied to a
+new Apps Script Web App route (or an extension of the existing dispatcher — exact routing decided
+at MVP-2A implementation time, but never a second unauthenticated entrypoint):
+
+- A new `CrudOperation` union (mirroring `apps-script/core/auth-domain.ts`'s `Operation` union) —
+  an explicit allowlist, never a dynamic/caller-keyed dispatch.
+- Every CRUD operation requires a **valid session** (via the frozen `validSession`/`validateSession`
+  check already in `auth-domain.ts`) before touching any Sheet data — there is no CRUD path that
+  skips authentication.
+- The BFF gains new `/api/applications/*`, `/api/users/*`, `/api/plans/*` routes (Vercel), each a
+  thin adapter that forwards a signed internal envelope to Apps Script exactly like
+  `server/auth/apps-script-client.ts` does today, extended with new operation names.
+- `AuthenticatedActor` (`apps-script/core/contracts.ts`, already reserved but unused) becomes the
+  authoritative actor: Apps Script derives `{ userId, role, email }` from the validated session,
+  never from a client-supplied field, for every CRUD call.
+
+### A. Exact route/API contracts (BFF, Vercel)
+
+All routes require a valid `__Host-hotech_session` cookie (checked authoritatively via the same
+Apps Script `validate_session` operation MVP-1 already calls) and, for every mutating
+(`POST`/`PATCH`/`DELETE`) route, the existing CSRF double-submit header (`X-CSRF-Token` matching
+the `__Host-hotech_csrf` cookie). Every response uses the existing `BffResponse<T>` envelope shape
+(`server/auth/http-envelope.ts`) — no new envelope shape.
+
+| Route | Method | Role(s) | Purpose |
+| --- | --- | --- | --- |
+| `/api/plans` | GET | Admin, Agent, Processor | List plans (Agent/Processor: `plan_status = Active` only) |
+| `/api/plans` | POST | Admin | Create a plan |
+| `/api/plans/:planId` | PATCH | Admin | Update a plan (price/speed/status); optimistic version required |
+| `/api/users` | GET | Admin | List users, paginated/filterable |
+| `/api/users/:userId` | PATCH | Admin | Update role, account status, or Processor assignment eligibility |
+| `/api/applications` | GET | Admin, Agent, Processor | List applications, scoped per role (§B) |
+| `/api/applications/:applicationId` | GET | Admin, Agent (own), Processor (assigned) | Read one application |
+| `/api/applications` | POST | Admin, Agent | Create an application |
+| `/api/applications/:applicationId` | PATCH | Admin, Agent (own, Pending only), Processor (assigned) | Update fields and/or status (§C) |
+| `/api/applications/:applicationId/assign` | POST | Admin | Assign/reassign a Processor |
+
+Exact request/response field lists are finalized at each batch's implementation time against this
+contract; this table fixes the route surface, methods, and role gate, which is the part that must
+not silently drift once implementation starts.
+
+### B. Authoritative RBAC matrix
+
+RBAC is enforced **only** in Apps Script, from the session-derived `AuthenticatedActor`. The BFF
+and frontend may pre-filter for UX, but a client-side check is never authoritative.
+
+| Action | Admin | Agent | Processor |
+| --- | --- | --- | --- |
+| View all applications | ✅ | ❌ (own only) | ❌ (assigned/available only) |
+| View own/assigned applications | ✅ | ✅ (own) | ✅ (assigned) |
+| Create application | ✅ | ✅ | ❌ |
+| Edit application core fields (customer/address/plan) | ✅ | ✅ (own, `Pending` only) | ❌ |
+| Change application status | ✅ (any allowed transition) | ❌ | ✅ (assigned only, allowed transitions per §C) |
+| Assign/reassign Processor | ✅ | ❌ | ❌ |
+| Manage Plans | ✅ | ❌ (read Active only) | ❌ (read Active only) |
+| Manage Users (create/role/status) | ✅ | ❌ | ❌ |
+| View Status_History | ✅ (any) | ✅ (own applications) | ✅ (assigned applications) |
+
+An Agent may only ever query/mutate rows where `agent_id` equals their own `userId`. A Processor
+may only ever query/mutate rows where `processor_id` equals their own `userId`. Both are enforced
+by filtering in the Apps Script repository layer against the authoritative `userId`, never by
+trusting a client-supplied `agent_id`/`processor_id` filter as authorization.
+
+### C. Application status-transition matrix (implementation of the already-frozen policy)
+
+`apps-script/core/status-transitions.ts` already implements the transition graph and validation
+rules (forward chain, Delayed/Cancelled branches, notes/job-order/installed-at requirements) and
+is **frozen — MVP-2 must call it unchanged, not reimplement it.** MVP-2's job is wiring authority
+around it:
+
+| From → To | Allowed actor(s) | Extra requirement (already enforced by `validateTransition`) |
+| --- | --- | --- |
+| Pending → Transmitted | Admin, assigned Processor | — |
+| Transmitted → With Job Order | Admin, assigned Processor | `job_order_number` |
+| With Job Order → Ongoing | Admin, assigned Processor | `job_order_number` carried forward |
+| Ongoing → Installed | Admin, assigned Processor | `job_order_number`, `installed_at` |
+| Pending/Transmitted/With Job Order/Ongoing → Delayed | Admin, assigned Processor | `notes` |
+| Pending/Transmitted/With Job Order/Ongoing → Cancelled/Rejected | Admin, assigned Processor | `notes` |
+| Delayed → (its prior status) | Admin, assigned Processor | `delayedFromStatus` matches history |
+| Cancelled/Rejected → Pending | Admin only (`canReopenCancellation`) | — |
+
+Every transition is authorized (is this actor allowed to act on this application at all, per §B)
+**before** `validateTransition` is even called; `validateTransition`'s own return only decides
+whether the specific transition shape is valid, never who may attempt it.
+
+### D. Allowed fields per role (write authorization, not just route authorization)
+
+| Entity | Admin-writable | Agent-writable (own, Pending only) | Processor-writable (assigned) |
+| --- | --- | --- | --- |
+| Applications: customer/address/plan fields | ✅ | ✅ | ❌ |
+| Applications: `current_status` + transition metadata | ✅ | ❌ | ✅ (allowed transitions only) |
+| Applications: `agent_id` | ✅ (reassign) | ❌ | ❌ |
+| Applications: `processor_id` | ✅ (assign) | ❌ | ❌ |
+| Applications: `notes` | ✅ | ✅ (own, Pending) | ✅ (as part of a status transition) |
+| Plans: all fields | ✅ | ❌ (read Active only) | ❌ (read Active only) |
+| Users: role, account_status | ✅ | ❌ | ❌ |
+| Users: own profile (`full_name`, `mobile_number`) | ✅ (any) | ✅ (own) | ✅ (own) |
+
+Any field not listed as writable by the caller's role is silently ignored server-side if present
+in a request body — never a client-controlled priority write. Ignoring vs. rejecting an
+unauthorized field is decided per batch (leaning toward rejecting with `VALIDATION_ERROR` for
+clarity, finalized at MVP-2A).
+
+### E. Validation rules (frozen-schema-driven, finalized per batch)
+
+- Every string field has a required/optional flag and a max length matching realistic Sheet-cell
+  content (exact limits fixed at each batch's implementation time; e.g. `customer_full_name`
+  required non-empty, `notes` optional up to a bounded length).
+- `mobile_number` and `email` use the same normalization/shape rules already established for Users
+  in the frozen schema and Phase 03 auth (`normalizeEmail` in `apps-script/core/first-bind.ts` is
+  reused for any email comparison — never reimplemented).
+- `plan_id` on an Application must reference an existing, `Active` Plan at creation time; the
+  `plan_name_snapshot`/`monthly_price_snapshot` columns are populated from that Plan at write time
+  and are never edited directly afterward (they are a snapshot, not a live join).
+- No request is ever trusted for `agent_id`, `processor_id`, `current_status` (on create), or any
+  audit/version/timestamp column — those are always server-derived.
+
+### F. Optimistic concurrency / version behavior
+
+Reuses `apps-script/core/versioning.ts`'s frozen `assertCurrentVersion` unchanged:
+
+- Every mutating request to an existing row includes the `version` the client last read.
+- `assertCurrentVersion` throws `StaleVersionError` on any mismatch; the ingress classifies this as
+  `CONFLICT` (matching the frozen Phase 03C1A error-classification pattern), never silently
+  overwriting a concurrent edit.
+- On success, `version` increments by exactly 1 and the new value is returned to the caller.
+- Creation operations do not use this check (no prior version exists); the created row starts at
+  `version = 1`.
+
+### G. Locking and audit behavior
+
+- Every mutation acquires `apps-script/core/lock.ts`'s frozen `withScriptLock` around its
+  read-check-write sequence, exactly as `bootstrapSchema`/`executeInternalAuthPhase03B` already do.
+  A lock timeout is classified `CONFLICT`, matching the frozen pattern.
+- Every mutation appends exactly one `Activity_Logs` row via the frozen `appendActivityLog`
+  (`apps-script/core/audit.ts`), with `actorUserId` from the authoritative session, `action`
+  naming the operation (e.g. `APPLICATION_STATUS_CHANGE`), and `metadata` carrying only safe,
+  non-secret fields (never a raw request body).
+- Every application status change additionally appends one `Status_History` row (frozen schema),
+  recording `from_status`, `to_status`, `notes`, `job_order_number`, `actor_user_id`, `request_id`,
+  and `occurred_at` — this is the authoritative history trail, independent of `Activity_Logs`.
+- Mutation audit ordering/compensation/recovery semantics follow D-014's existing constraint:
+  append-only, no Sheet transaction guarantees beyond the script lock; a mid-mutation failure after
+  the lock is released is surfaced as `INTERNAL_ERROR` and does not silently retry.
+
+### H. Pagination and filtering
+
+- List endpoints (`GET /api/applications`, `GET /api/users`, `GET /api/plans`) use the existing
+  `ApiMeta.nextCursor` cursor field already defined in `apps-script/core/contracts.ts` — no new
+  pagination shape invented.
+- Filtering is allowlisted per endpoint (e.g. `current_status`, `agent_id` for Admin, date range)
+  and always applied server-side against the role-scoped result set from §B, never as a
+  client-supplied override of that scope.
+- A reasonable fixed page size is chosen per batch at implementation time (e.g. 25–50 rows) and
+  documented in that batch's own task record.
+
+### I. Safe errors
+
+Reuses the existing `ErrorCode`/`ApiFailure` shape from `apps-script/core/contracts.ts`
+(`VALIDATION_ERROR`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `RATE_LIMITED`,
+`INTERNAL_ERROR`) and the BFF's existing `BffErrorCode`/status mapping
+(`server/auth/http-envelope.ts`) — no new error taxonomy. `FORBIDDEN` is used for both "wrong role"
+and "not your row" (never disclosing which, to avoid confirming row existence to an unauthorized
+caller). No raw exception message, Sheet ID, row index, or internal identifier is ever returned.
+
+### J. Tests and isolated acceptance
+
+- Mocked/local unit tests for every new Apps Script operation (RBAC allow/deny per role, every
+  transition-matrix edge already covered by `apps-script/test/`-style fixtures, version-conflict,
+  lock-conflict, and audit-row-shape assertions) and every new BFF route (same mocked-fetch pattern
+  as `server/test/routes/*.test.ts`).
+- No live Google/Apps Script/Vercel access during MVP-2A–2E; MVP-2F is integration verification
+  **still using local/mocked fixtures**, not a live environment — the one live isolated QA pass for
+  all of MVP-1–3 remains MVP-4, per the roadmap's explicit goal of avoiding a second isolated setup.
+- Frozen-dashboard Playwright regressions must still pass unmodified at the end of every batch.
+
+### K. Frozen UI constraints
+
+- No change to the frozen dashboard visual baseline (Phase 01) beyond what MVP-3 explicitly scopes
+  (live data). MVP-2 is backend/API-only; any UI needed to exercise it manually (e.g. a bare form)
+  is deferred to MVP-3 unless a batch explicitly and narrowly requires a minimal UI hook, decided
+  at that batch's own planning step — never assumed in advance.
+- `DashboardShell`'s navigation items (Applications, Agents, Processors, Plans, etc. — already
+  present as inert labels per Phase 01) are not wired to real routes/pages during MVP-2; that
+  remains MVP-3's job.
+
+---
+
+## MVP-1 — Authentication Frontend (Owner Approved, frozen)
+
+**Owner Approved and frozen (2026-09-16).** Committed locally (not pushed) as
+`feat(mvp-1): implement approved authentication frontend`.
+
+Approval scope: GIS login frontend and nonce lifecycle, frontend auth provider/state, canonical
+role-protected routes, safe role redirects, the minimal logout control, and safe
+authentication/account/session error states — verified locally and via mocks only.
+
+This approval does **not** claim: real Google login verification, live Apps Script ingress
+verification, live Upstash integration, Vercel Preview cookie/CSRF validation, or production
+readiness/deployment. Those remain deferred to MVP-4.
+
+**Future material changes to the login screen or dashboard-auth UI (route guards, auth provider
+behavior, session/error-state handling, or the logout control) require an explicit owner change
+request**, matching the frozen-phase convention already used for Phase 00/01/02/03A/03B/03C1.
+
+### Focused review/remediation (2026-09-16)
+
+A follow-up review against the MVP-1 spec found and fixed three real defects, and added a minimal
+logout control per an explicit owner change request. No CRUD, uploads, reports, Apps Script, or
+BFF server-domain code was touched.
+
+**Findings:**
+
+1. **Unsafe post-login destination.** `LoginPage` redirected to `location.state.from` — an
+   arbitrary router-supplied string — without checking it against the newly authenticated user's
+   own role. A visitor who first tried `/admin/dashboard` while signed out could be sent there
+   after logging in as an Agent. Fixed with `safeDestinationForRole()`
+   (`src/routes/constants.ts`): only the three canonical dashboard paths are ever considered, and
+   only when the path belongs to the authenticated user's own role; anything else (short routes,
+   root, external/protocol-relative URLs, query-controlled strings, non-string values) falls back
+   to that role's own canonical dashboard. `ProtectedRoute` was also tightened to only ever store
+   its own canonical path as the attempted destination, never the raw `location.pathname`.
+2. **No concurrent-login guard.** The GIS credential callback in `LoginPage` had no protection
+   against firing twice (double-click, or a stray re-invocation) while a login was already in
+   flight. Fixed with an in-flight ref guard that ignores a second callback until the first
+   `loginWithGoogleCredential` call settles; the rendered GIS button is also visually dimmed and
+   `pointer-events: none` during `signing-in`.
+3. **`logout()` did not actually swallow a network failure.** `AuthProvider`'s `logout()` used
+   `try { await logoutRequest() } finally { setState(...) }` — since a `finally` block does not
+   suppress a thrown error, a failed `POST /api/auth/logout` (server unavailable) re-threw after
+   setting state, becoming an unhandled promise rejection instead of the documented "always resolve
+   to unauthenticated" behavior. Fixed by adding an intentional empty `catch` before the `finally`.
+
+**New logout control (explicit owner change request — a small, non-material dashboard-shell
+addition):** the previously non-functional "profile menu" button in `DashboardShell`'s header
+(`src/components/dashboard/dashboard-shell.tsx`) now calls `useAuth().logout()`, disables itself
+and shows "Signing out…" while in flight, and navigates to `/login` in every outcome (its
+`ChevronDown` icon was replaced with `LogOut`; nothing else in the header, sidebar, or layout
+changed). This is the only pixel-level change to a previously frozen dashboard file in all of
+MVP-1, and it is confined to swapping one icon and wiring one existing, already-styled button —
+layout, colors, spacing, and navigation hierarchy are unchanged, and Playwright's frozen-dashboard
+overflow regressions (§ below) still pass unmodified.
+
+The nonce lifecycle itself was reviewed and found already correct: `POST /api/auth/nonce` is
+called before GIS initialization; the returned nonce is passed into `accountsId.initialize({
+nonce, ... })`; GIS embeds that nonce as a signed claim inside the ID token it issues, so there is
+no separate "nonce proof" field for the frontend to send — the BFF's `google-verifier.ts` extracts
+and validates that claim against the stored nonce hash server-side. No nonce or ID token is ever
+written to `localStorage`/`sessionStorage` (confirmed by a repo-wide grep finding zero references,
+and by a dedicated test).
+
+### Outcome
+
+Makes the existing, already-approved auth backend (Phase 03C1, five `/api/auth/*` routes) usable
+from the browser: a GIS login screen, a browser auth provider backed only by
+`GET /api/auth/me`, and role-based route guards. No CRUD, uploads, reports, live Google login, or
+production access. The frozen dashboards are visually unchanged; only real auth gating was added
+in front of them.
+
+### Files changed
+
+| File | Change |
+| --- | --- |
+| `src/config/env.ts` (+ test) | Added `googleClientId` from `VITE_GOOGLE_CLIENT_ID` (already declared in `.env.example`, previously unread). Undefined when unset; never throws. |
+| `src/auth/types.ts` (new) | `AuthUser`, `AuthSession`, `AuthErrorCode` (mirrors the BFF's safe codes plus a frontend-only `NETWORK_ERROR`), and the discriminated `AuthState` (`checking` / `unauthenticated` / `authenticated` / `error`). |
+| `src/auth/role-mapping.ts` (+ test) | Maps the BFF's capitalized role string (`Admin`/`Agent`/`Processor`, per `apps-script/core/auth-domain.ts`'s `supportedRole`) to the frontend's lowercase `Role` type. Uses `Object.hasOwn` so an unrecognized value (including `"__proto__"`) never resolves to an inherited object instead of `undefined`. |
+| `src/auth/api-client.ts` (+ test) | Thin, typed wrappers for all five `/api/auth/*` routes. Every request uses `credentials: "same-origin"`; `logout()` reads the current `__Host-hotech_csrf` cookie value (not `HttpOnly`, per `server/auth/cookies.ts`) and sends it as `X-CSRF-Token`, matching the BFF's double-submit check. Any error envelope is mapped to a known `AuthErrorCode` only — an unrecognized code from the server becomes `INTERNAL_ERROR` rather than being passed through raw. |
+| `src/auth/auth-context.tsx` (+ test) | `AuthProvider`/`useAuth`. Calls `GET /api/auth/me` once on mount; `AUTH_REQUIRED`/`SESSION_EXPIRED` become `unauthenticated`, every other error code becomes a distinct `error` state (so `ACCOUNT_INACTIVE`/`ACCOUNT_LOCKED` are never silently treated as "just sign in again"). `logout()` always ends in `unauthenticated` locally, since the BFF's logout is itself safe/idempotent. |
+| `src/auth/protected-route.tsx` (+ test) | Route guard. Renders the loading/error view while `checking`/`error`; redirects to `/login` (preserving the attempted path) while `unauthenticated`; redirects a signed-in wrong-role visitor to their own canonical dashboard via `routeForRole`; only then renders the guarded children. Role authorization is decided exclusively from `AuthProvider`'s state, itself sourced only from `GET /api/auth/me`. |
+| `src/auth/auth-state-view.tsx` (new) | Shared loading/error view reusing the frozen `DashboardCard` styling. Generic copy only: never discloses whether an email/user row exists; `ACCOUNT_INACTIVE`/`ACCOUNT_LOCKED` both render "contact your Admin" with no other detail. |
+| `src/auth/google-identity-services.ts` (new) | Loads the Google Identity Services script (`accounts.google.com/gsi/client`) at most once, only ever from the login page. |
+| `src/pages/login-page.tsx` (+ test) | GIS login screen. Fetches a nonce (`POST /api/auth/nonce`) and initializes GIS with it; the only input to the app is the ID token GIS itself returns in its callback — no password/OTP field exists. Renders loading/unavailable/signing-in/error states with fixed generic copy; redirects to the canonical role dashboard (or the originally attempted path) once authenticated. |
+| `src/app.tsx` | Wrapped routes in `AuthProvider`; added `/login`; each dashboard route is now wrapped in `ProtectedRoute` for its role. `DashboardPage`/all dashboard components (other than the header logout wiring below) are otherwise untouched. |
+| `src/app.test.tsx` | Updated to mock `GET /api/auth/me` (the app no longer renders a dashboard without it); added a redirect-to-`/login` case and a wrong-role-redirect case. |
+| `src/test/setup.ts` | Added a global `afterEach(cleanup)` from `@testing-library/react` — required once more than one `render()` call appears across a test file's cases; no prior test file needed it. |
+| `e2e/dashboard-responsive.spec.ts` | Added a `page.route("**/api/auth/me", …)` stub simulating an authenticated session per role, since `npm run dev` has no live BFF backing it in this harness. Stubs only the one network response the guard reads; does not touch, weaken, or bypass any real auth code. Added one new regression: an unauthenticated visitor is redirected to `/login`. |
+| `src/routes/constants.ts` (+ test) | Added `safeDestinationForRole()`: the only function permitted to decide a post-login redirect destination. Allowlists exactly the three canonical dashboard paths and requires the destination to match the caller's own role. |
+| `src/auth/protected-route.tsx` | Now stores only its own canonical path (via `safeDestinationForRole`) as the attempted destination, never raw `location.pathname`. |
+| `src/pages/login-page.tsx` | Post-login redirect now goes through `safeDestinationForRole`; added an in-flight guard against a concurrent/repeated GIS credential callback; the GIS button area is visually disabled during `signing-in`. |
+| `src/auth/auth-context.tsx` | Fixed `logout()` to genuinely swallow a failed `POST /api/auth/logout` (was previously re-thrown past the `finally`, causing an unhandled rejection) so it always resolves to `unauthenticated`, matching its documented contract. |
+| `src/components/dashboard/dashboard-shell.tsx` (+ test) | **Owner-approved minimal logout control.** The previously non-functional profile-menu header button now calls `useAuth().logout()`, disables itself and reads "Signing out…" while in flight, and navigates to `/login` in every outcome. Its `ChevronDown` icon is replaced with `LogOut`; nothing else in the header/sidebar/layout changed. |
+| `src/pages/login-page-unavailable.test.tsx` (new) | Split out of `login-page.test.tsx` so the "no Google Client ID configured" case runs against the real (unmocked) `environment`, once the main file started mocking `googleClientId` for the new GIS-flow tests. |
+
+Frozen and unchanged: `dashboard-ui.tsx`, `dashboard-page.tsx`, `chart-styles.ts`,
+`src/data/dashboard-mocks.ts`, all Apps Script/server Phase 03A/03B/03C1/03C1A code.
+`dashboard-shell.tsx` received only the owner-approved logout wiring described above; its layout,
+colors, navigation hierarchy, and responsive behavior are otherwise unchanged (confirmed by the
+unmodified Playwright overflow regressions).
+
+### Route and auth flow
+
+1. `/login` — unauthenticated visitor: `AuthProvider` calls `GET /api/auth/me`, sees
+   `AUTH_REQUIRED`, sets `unauthenticated`. `LoginPage` fetches a nonce and initializes GIS;
+   clicking the GIS-rendered button completes Google's own sign-in UI, which invokes the page's
+   callback with an ID token only. That token is sent verbatim to `POST /api/auth/login`;
+   the BFF (unchanged) verifies it, calls the frozen Apps Script `login_first_bind` operation
+   through the Phase 03C1A ingress, and sets the session/CSRF cookies. The frontend then calls
+   `refresh()` (`GET /api/auth/me` again) to obtain the authoritative role and redirects to that
+   role's canonical dashboard, or to the path the visitor originally tried to reach.
+2. `/admin|/agent|/processor/dashboard` — each wrapped in `ProtectedRoute` for its role.
+   `checking` renders a loading view; `unauthenticated` redirects to `/login`; `error` renders the
+   safe error view; a mismatched role redirects to the visitor's own canonical dashboard; only a
+   matching role renders `DashboardPage` unchanged.
+3. Logout — now wired to the dashboard header's sign-out control — calls `POST /api/auth/logout`
+   with the CSRF cookie's current value as `X-CSRF-Token`, then sets local state to
+   `unauthenticated` regardless of the network outcome (including a failed/unavailable request),
+   and navigates to `/login`, matching the BFF's own safe/idempotent logout contract.
+
+### Security boundaries preserved
+
+- **No password/OTP/credential field exists in this app.** The only credential ever handled is the
+  GIS-issued ID token, handed directly to the existing `POST /api/auth/login` route.
+- **Role is never a client claim.** `roleFromServerValue` only accepts the BFF's own capitalized
+  role string, itself sourced from the frozen Apps Script Sheet-backed check; an unrecognized
+  value is rejected (`FORBIDDEN`), never guessed. Route authorization reads only from
+  `AuthProvider`'s state, which itself reads only from `GET /api/auth/me`.
+- **CSRF double-submit is honored, not reimplemented.** The frontend reads the same cookie value
+  the BFF's `verifyCsrfDoubleSubmit` check expects and echoes it back as `X-CSRF-Token`; it never
+  invents or bypasses this check.
+- **Cookies remain the same-origin, `credentials: "same-origin"` fetch model** the BFF plan
+  requires; no token is read from or written to any JS-readable storage (`localStorage`,
+  `sessionStorage`) at any point — confirmed by a repo-wide grep and by a dedicated test.
+- **No error message ever discloses account existence.** `ACCOUNT_INACTIVE`/`ACCOUNT_LOCKED` and
+  every other error code render fixed generic copy only, per `docs/PHASE_03C_AUTH_PLAN.md`'s
+  "never disclose whether an email or user row exists" rule.
+- **Post-login destination is never attacker- or query-controlled.** `safeDestinationForRole`
+  allowlists exactly the three canonical dashboard paths and requires a role match; there is no
+  arbitrary return URL, no `?next=`/query-controlled redirect, and no external URL is ever honored.
+- **A login attempt cannot be duplicated client-side.** An in-flight guard in `LoginPage` ignores a
+  second GIS credential callback while the first is still being processed.
+- **Logout is safe under server failure.** `logout()` swallows a failed `POST /api/auth/logout` and
+  always resolves the frontend to `unauthenticated`; the dashboard header's sign-out control
+  disables itself while in flight and always navigates to `/login` afterward, matching the BFF's
+  own idempotent contract. It exposes no session or CSRF value in the DOM (verified by test).
+- **No production, live Google, or live Apps Script/Vercel access occurred.** All tests use a
+  mocked `fetch`/Playwright route stub.
+
+### Test results (local; no live external resource used)
+
+- `npm run test`: **240/240 passing** (was 220 before this review; +20 new: `routes/constants` (+5
+  `safeDestinationForRole` cases), `login-page` (+4: nonce→GIS→login binding, concurrent-login
+  prevention, nonce failure, no browser-storage), `login-page-unavailable` (split out, 1 test),
+  `auth-context` (+3: `RATE_LIMITED` state, logout success, logout-under-failure),
+  `protected-route` (+3: `RATE_LIMITED`/`INTERNAL_ERROR`/`AUTH_SERVICE_UNAVAILABLE` views),
+  `dashboard-shell` (new, 5: nav preserved, logout success, logout failure, in-flight double-click
+  prevention, no session/CSRF leakage in the DOM)).
+- `npm run gas:test`: **57/57 Apps Script tests passing**, unaffected (no Apps Script/server file
+  touched by this review).
+- `npm run format:check`, `npm run typecheck`: clean.
+- `npm run lint`: clean except the same one pre-existing-pattern warning
+  (`react-refresh/only-export-components` on `auth-context.tsx`); lint exits 0.
+- `npm run build`: production build succeeds; `dist/assets/*.js` scanned clean of every
+  server-only secret/env-name substring (cookie *name* constants like `__Host-hotech_csrf`
+  legitimately appear in the client bundle — the frontend must read them — but no pepper, HMAC key,
+  Upstash token, or internal URL does).
+- `npx playwright test`: **19/19 passing**, unchanged from the prior batch (confirms the logout
+  wiring did not alter the frozen dashboard visual baseline).
+- `git diff --check`: no whitespace/conflict-marker issues.
+- No push, deploy, commit, or live Google/Upstash/Apps Script/Vercel access occurred at any point.
+
+### Known limitations
+
+- Real Google Identity Services and real Google sign-in are still untested here
+  (`environment.googleClientId` is unset in every local/CI environment); the nonce→GIS→login
+  binding is verified against a fake `accounts.id` that captures and replays the callback, not a
+  real Google-issued token. Real GIS login remains an MVP-4 exercise on a Vercel Preview with a
+  non-production Google OAuth Web Client.
+- `RATE_LIMITED` and `REPLAY_OR_CONFLICT` render the same generic "please try again"/rate-limited
+  copy as specified; no distinct backoff/countdown UI was added beyond what
+  `docs/PHASE_03C_AUTH_PLAN.md` specifies as safe generic copy.
+- The dashboard header's sign-out control has no confirmation dialog; logout is treated as a safe,
+  reversible-enough action (the user simply signs back in), consistent with the BFF's own
+  idempotent/no-confirmation logout design.
+- CRUD, uploads, reports, and dashboard live-data wiring remain out of scope (MVP-2/MVP-3).
+
+### Manual review routes
+
+To review this locally: `npm run dev`, then visit `/admin/dashboard` (or `/agent`, `/processor`) —
+expect a redirect to `/login`, since there is no live BFF session in local dev. `/login` itself
+renders fully (heading, description, "Preparing sign-in…" or "Sign-in is temporarily unavailable"
+depending on whether `VITE_GOOGLE_CLIENT_ID` is set) without needing any backend. Full login →
+dashboard → guard → logout behavior, the safe-destination allowlist, concurrent-login prevention,
+and every account/session error state are exercised in the automated test suite
+(`src/auth/*.test.ts(x)`, `src/app.test.tsx`, `src/pages/login-page*.test.tsx`,
+`src/components/dashboard/dashboard-shell.test.tsx`) and in the Playwright regressions
+(`e2e/dashboard-responsive.spec.ts`) via mocked network responses, since a real session requires a
+live Vercel Preview + Apps Script deployment (MVP-4).
 
 ---
 
@@ -182,3 +599,16 @@ complete the result-recording template before revoking the deployment.
 **Ready for Owner Review.** Not Owner Approved. Not FINAL. Its live isolated acceptance is deferred
 into MVP-4 per `docs/MVP_COMPLETION_PLAN.md`; this phase stays Ready for Owner Review until that QA
 passes. Old Phase 03C2 is superseded by MVP-1 and old Phase 03D by MVP-4.
+
+---
+
+## Overall approval state (top of file)
+
+- **MVP-1 — Authentication Frontend: Owner Approved and frozen (2026-09-16).** Committed locally
+  (not pushed) as `feat(mvp-1): implement approved authentication frontend`. Future material
+  login/dashboard-auth UI changes require an explicit owner change request.
+- **Phase 03C1A: Ready for Owner Review** (unchanged; committed locally, not pushed). Live
+  acceptance deferred to MVP-4.
+- **MVP-2 — Core Tracker CRUD: Planning only, not started.** Split into MVP-2A–2F (see above);
+  full route/RBAC/transition/validation/concurrency/audit/pagination/error/test specification is
+  recorded above and must be reviewed before any implementation begins.

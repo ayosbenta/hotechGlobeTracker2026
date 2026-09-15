@@ -19,4 +19,8 @@ export const environment = Object.freeze({
   appName:
     readOptionalNonEmpty(import.meta.env.VITE_APP_NAME, "VITE_APP_NAME") ??
     "Hotech Globe Tracker",
+  googleClientId: readOptionalNonEmpty(
+    import.meta.env.VITE_GOOGLE_CLIENT_ID,
+    "VITE_GOOGLE_CLIENT_ID",
+  ),
 });

@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 
 const viewports = [
@@ -9,10 +10,45 @@ const viewports = [
 ];
 
 const dashboards = [
-  { route: "/admin/dashboard", heading: "Good morning, Admin!" },
-  { route: "/agent/dashboard", heading: "Good morning, Maria!" },
-  { route: "/processor/dashboard", heading: "Dashboard" },
+  { route: "/admin/dashboard", heading: "Good morning, Admin!", role: "Admin" },
+  { route: "/agent/dashboard", heading: "Good morning, Maria!", role: "Agent" },
+  { route: "/processor/dashboard", heading: "Dashboard", role: "Processor" },
 ] as const;
+
+/**
+ * These regressions exercise the frozen dashboard visual baseline, which
+ * MVP-1's route guards now gate behind GET /api/auth/me. There is no live
+ * BFF/Apps Script backing `npm run dev` in this test harness, so /api/auth/me
+ * is stubbed here to simulate an authenticated session for the given role.
+ * This never touches, weakens, or bypasses the real auth code: it only
+ * fakes the one network response the guard reads, exactly as the unit
+ * tests do with a mocked fetch.
+ */
+async function mockAuthenticatedSession(
+  page: Page,
+  role: string,
+): Promise<void> {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        requestId: "e2e-request",
+        data: {
+          user: { fullName: "", role },
+          session: {
+            idleExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            absoluteExpiresAt: new Date(
+              Date.now() + 8 * 60 * 60 * 1000,
+            ).toISOString(),
+          },
+          redirectTo: `/${role.toLowerCase()}/dashboard`,
+        },
+      }),
+    }),
+  );
+}
 
 for (const dashboard of dashboards) {
   for (const viewport of viewports) {
@@ -25,6 +61,7 @@ for (const dashboard of dashboards) {
         if (message.type() === "error") pageErrors.push(message.text());
       });
 
+      await mockAuthenticatedSession(page, dashboard.role);
       await page.setViewportSize(viewport);
       await page.goto(dashboard.route);
 
@@ -43,11 +80,40 @@ for (const dashboard of dashboards) {
   }
 }
 
-for (const redirect of ["/admin", "/agent", "/processor"]) {
+for (const redirect of ["/admin", "/agent", "/processor"] as const) {
+  const role =
+    redirect === "/admin"
+      ? "Admin"
+      : redirect === "/agent"
+        ? "Agent"
+        : "Processor";
+
   test(`${redirect} redirects to its canonical dashboard route`, async ({
     page,
   }) => {
+    await mockAuthenticatedSession(page, role);
     await page.goto(redirect);
     await expect(page).toHaveURL(new RegExp(`${redirect}/dashboard$`));
   });
 }
+
+test("an unauthenticated visitor to a protected dashboard route is redirected to /login", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        requestId: "e2e-request",
+        error: { code: "AUTH_REQUIRED", message: "Sign in is required." },
+      }),
+    }),
+  );
+  await page.goto("/admin/dashboard");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(
+    page.getByText("Sign in with your Google account to continue."),
+  ).toBeVisible();
+});

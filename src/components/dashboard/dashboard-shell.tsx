@@ -1,9 +1,9 @@
 import {
   Bell,
-  ChevronDown,
   ClipboardList,
   FilePlus2,
   LayoutDashboard,
+  LogOut,
   Menu,
   Orbit,
   Search,
@@ -16,8 +16,9 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 
+import { useAuth } from "@/auth/auth-context";
 import { Button } from "@/components/ui/button";
 import { environment } from "@/config/env";
 import { cn } from "@/lib/utils";
@@ -140,8 +141,24 @@ function Sidebar({
 
 export function DashboardShell({ role, children }: DashboardShellProps) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const profile = profileByRole[role];
   const roleLabel = ROLE_DEFINITIONS[role].label;
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+
+  async function handleLogout() {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      // logout() always resolves the frontend to unauthenticated even if
+      // the network call itself failed (safe/idempotent server contract);
+      // navigating to /login is therefore correct in every outcome.
+      navigate("/login", { replace: true });
+    }
+  }
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-[#f4f9ff] text-[#07183f]">
@@ -200,8 +217,10 @@ export function DashboardShell({ role, children }: DashboardShellProps) {
               <span className="absolute right-2 top-2 size-2 rounded-full bg-red-500 ring-2 ring-white" />
             </button>
             <button
-              aria-label="Open profile menu"
-              className="hidden min-h-11 items-center gap-3 rounded-lg px-2 text-left hover:bg-blue-50 sm:flex"
+              aria-label={isLoggingOut ? "Signing out…" : "Sign out"}
+              className="hidden min-h-11 items-center gap-3 rounded-lg px-2 text-left hover:bg-blue-50 disabled:opacity-60 sm:flex"
+              disabled={isLoggingOut}
+              onClick={() => void handleLogout()}
               type="button"
             >
               <span className="grid size-10 place-items-center rounded-full bg-gradient-to-br from-blue-800 to-cyan-500 text-xs font-bold text-white">
@@ -215,10 +234,7 @@ export function DashboardShell({ role, children }: DashboardShellProps) {
                   {roleLabel}
                 </span>
               </span>
-              <ChevronDown
-                aria-hidden="true"
-                className="size-4 text-slate-500"
-              />
+              <LogOut aria-hidden="true" className="size-4 text-slate-500" />
             </button>
             <Button
               aria-label="Close navigation"

@@ -1,7 +1,6 @@
 # MVP Completion Plan
 
-Status: **Planning only — proposed, not Owner Approved.** No source code, approval state, or
-deployment changed by this document.
+Status: **Owner Approved (2026-09-15).** See decisions D-035/D-036 in `docs/DECISIONS.md`.
 
 Owner change request (2026-09-15): consolidate the remaining roadmap into five MVP batches,
 preserving every Owner Approved/frozen phase and the currently implemented Phase 03C1A work.
@@ -30,8 +29,8 @@ alter any frozen behavior.
 | Phase 03C1A manual isolated setup (in progress) | **Stopped** | The partially-started manual Sheet/Apps Script setup is discontinued. No resource created in that attempt is reused. |
 | Phase 03C2 (old) — GIS login UI and guards | **Superseded** | Becomes **MVP-1**. |
 | Phase 03D (old) — Isolated Vercel Preview QA | **Superseded** | Absorbed into **MVP-4**, now also covering 03C1A ingress acceptance, CRUD and dashboards. |
-| MVP-1 — Authentication frontend | **Not started** | Next recommended batch. |
-| MVP-2 — Core tracker CRUD | **Not started** | Depends on MVP-1. |
+| MVP-1 — Authentication frontend | **Owner Approved / frozen** (2026-09-16) | Local/mocked scope only (D-037). 240/240 unit tests, 19/19 Playwright. Committed locally as `feat(mvp-1): ...`, not pushed. Future material login/dashboard-auth UI changes require an owner change request. |
+| MVP-2 — Core tracker CRUD | **Planning only** (2026-09-16) | Split into MVP-2A–2F (D-038); full specification recorded in `docs/NEXT_TASK.md`. Not started. |
 | MVP-3 — Dashboard live data | **Not started** | Depends on MVP-2. |
 | MVP-4 — Final isolated integration QA | **Not started** | Depends on MVP-1..3; unblocks 03C1A approval. |
 | MVP-5 — Production release | **Not started** | Requires explicit owner approval to execute. |
@@ -71,7 +70,19 @@ Exit criteria: full local verification suite green; 18 Playwright dashboard regr
 ### MVP-2 — Core Tracker CRUD
 
 The actual tracker. Google Sheets stays the database; the frozen Phase 02 schema already has every
-tab and column this needs.
+tab and column this needs. **Split into six bounded internal batches** (D-038) to keep this,
+the largest remaining batch, reviewable:
+
+- **MVP-2A** — shared contracts, Apps Script repository layer, Admin Plans CRUD.
+- **MVP-2B** — Admin Users/role assignments and account-status management.
+- **MVP-2C** — Applications create/read/update foundation.
+- **MVP-2D** — Agent own-application workflow.
+- **MVP-2E** — Processor queue/assignment/status transitions.
+- **MVP-2F** — integration verification, audits, and regression across 2A–2E.
+
+The full route/RBAC/status-transition/validation/concurrency/locking/audit/pagination/error/test
+specification is recorded in `docs/NEXT_TASK.md` and is the binding reference for implementation;
+this plan document tracks only the batch split and the constraints below.
 
 - Admin: manage Users, Agents, Processors, Plans, Applications; assign Processor.
 - Agent: create applications; view own applications only.
@@ -80,7 +91,8 @@ tab and column this needs.
 - Reuses the frozen Phase 02 primitives: UUIDs, `version` optimistic concurrency, `LockService` script locks, `Status_History` rows, `Activity_Logs` audit rows, and the frozen `validateTransition` status matrix (including notes-required and job-order-required rules).
 - New internal Apps Script operations added behind the **same** frozen signed-envelope ingress pattern as auth — allowlisted explicitly, never dynamically dispatched.
 
-Exit criteria: full local verification suite green; new CRUD/RBAC unit tests; no frozen module modified.
+Exit criteria (per batch, and overall at MVP-2F): full local verification suite green; new CRUD/RBAC
+unit tests; no frozen module modified.
 
 ### MVP-3 — Dashboard Live Data and Workflow Completion
 
