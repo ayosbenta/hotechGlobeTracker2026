@@ -138,6 +138,22 @@ function sessionFor(
   if (found === undefined) throw new AuthDenied();
   return found;
 }
+/**
+ * Reusable authenticated-actor resolver for non-auth domains (e.g. CRUD).
+ * Derives `{ userId, role }` only from a validated session record — never
+ * from a client-supplied claim — reusing the same `validSession` check the
+ * auth operations above use. Exported unchanged in behavior from the
+ * previously private `validSession`.
+ */
+export function resolveAuthenticatedActor(
+  deps: AuthDomainDependencies,
+  sessionToken: string,
+): { userId: string; role: "Admin" | "Agent" | "Processor"; email: string } {
+  const { user } = validSession(deps, sessionToken);
+  if (!supportedRole(user.role)) throw new AuthDenied();
+  return { userId: user.userId, role: user.role, email: user.email };
+}
+
 function validSession(
   deps: AuthDomainDependencies,
   raw: string,
@@ -160,6 +176,19 @@ function validSession(
     throw new AuthDenied();
   return { session, user };
 }
+/**
+ * Reusable CSRF-token-matches-session check for non-auth domains. Same
+ * behavior as the private check the auth operations above use.
+ */
+export function requireSessionCsrf(
+  deps: AuthDomainDependencies,
+  sessionToken: string,
+  csrfToken: unknown,
+): void {
+  const { session } = validSession(deps, sessionToken);
+  requireCsrf(deps, session, csrfToken);
+}
+
 function requireCsrf(
   deps: AuthDomainDependencies,
   session: StoredSession,

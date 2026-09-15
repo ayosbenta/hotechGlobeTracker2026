@@ -6,6 +6,7 @@ function validEnv(overrides: Record<string, string | undefined> = {}) {
   return {
     GOOGLE_CLIENT_ID: "client-id.apps.googleusercontent.com",
     APPS_SCRIPT_INTERNAL_URL: "https://script.google.com/macros/s/abc/exec",
+    APPS_SCRIPT_CRUD_URL: "https://script.google.com/macros/s/abc/exec",
     INTERNAL_AUDIENCE: "hotech-internal",
     INTERNAL_HMAC_KEYS_JSON: JSON.stringify({
       "key-1": { secret: "s".repeat(32), status: "active" },
@@ -34,6 +35,17 @@ describe("server env validation", () => {
     expect(() =>
       loadServerAuthEnv(
         validEnv({ APPS_SCRIPT_INTERNAL_URL: "http://insecure.example.com" }),
+      ),
+    ).toThrow(EnvValidationError);
+  });
+
+  it("fails closed when APPS_SCRIPT_CRUD_URL is missing or not https", () => {
+    const missing = validEnv();
+    delete missing.APPS_SCRIPT_CRUD_URL;
+    expect(() => loadServerAuthEnv(missing)).toThrow(EnvValidationError);
+    expect(() =>
+      loadServerAuthEnv(
+        validEnv({ APPS_SCRIPT_CRUD_URL: "http://insecure.example.com" }),
       ),
     ).toThrow(EnvValidationError);
   });

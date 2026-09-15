@@ -1,4 +1,5 @@
 import type { AppsScriptAuthClient } from "./apps-script-client";
+import type { AppsScriptCrudClient } from "../crud/apps-script-crud-client";
 import type { CryptoAdapter } from "./crypto";
 import type {
   GoogleIdTokenVerifier,
@@ -33,6 +34,8 @@ export interface RouteDependencies {
   nonceStore: NonceStore;
   rateLimiter: RateLimiter;
   appsScript: AppsScriptAuthClient;
+  /** MVP-2A: the internal-CRUD sibling client, reused across all CRUD routes. */
+  appsScriptCrud: AppsScriptCrudClient;
   rateLimitKeySecret: string;
   sessionIdleSeconds: number;
   sessionAbsoluteSeconds: number;

@@ -7,6 +7,13 @@ export interface HmacKey {
 export interface ServerAuthEnv {
   googleClientId: string;
   appsScriptInternalUrl: string;
+  /**
+   * MVP-2A: the Apps Script Web App's internal-CRUD ingress URL
+   * (`.../exec/v1/internal/crud`), a sibling route on the same deployment as
+   * `appsScriptInternalUrl`'s `.../exec/v1/internal/auth`. Reuses the same
+   * HMAC key ring/audience — it is not a separate trust boundary.
+   */
+  appsScriptCrudUrl: string;
   internalAudience: string;
   internalHmacKeys: ReadonlyMap<string, HmacKey>;
   internalHmacActiveKeyId: string;
@@ -26,6 +33,7 @@ export class EnvValidationError extends Error {
 const REQUIRED_SERVER_KEYS = [
   "GOOGLE_CLIENT_ID",
   "APPS_SCRIPT_INTERNAL_URL",
+  "APPS_SCRIPT_CRUD_URL",
   "INTERNAL_AUDIENCE",
   "INTERNAL_HMAC_KEYS_JSON",
   "INTERNAL_HMAC_ACTIVE_KEY_ID",
@@ -113,6 +121,7 @@ export function loadServerAuthEnv(
   const appsScriptInternalUrl = httpsUrl(
     required(source, "APPS_SCRIPT_INTERNAL_URL"),
   );
+  const appsScriptCrudUrl = httpsUrl(required(source, "APPS_SCRIPT_CRUD_URL"));
 
   const internalAudience = required(source, "INTERNAL_AUDIENCE");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(internalAudience))
@@ -139,6 +148,7 @@ export function loadServerAuthEnv(
   return {
     googleClientId,
     appsScriptInternalUrl,
+    appsScriptCrudUrl,
     internalAudience,
     internalHmacKeys,
     internalHmacActiveKeyId,

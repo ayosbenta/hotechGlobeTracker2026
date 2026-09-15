@@ -130,19 +130,26 @@ for (const entrypoint of ["doGet", "doPost"]) {
 }
 
 // doGet remains the frozen, unauthenticated health-only route: it must never
-// reach the internal-auth dispatcher or any operation-specific internal path.
+// reach the internal-auth dispatcher, the CRUD dispatcher, or any
+// operation-specific internal path.
 const doGetBody = globalFunctionBody(code, "doGet");
 if (
   doGetBody.includes("executeInternalAuth") ||
   /\/internal\/v1\/auth\//.test(doGetBody)
 )
   fail("doGet must not route to internal auth");
+if (
+  doGetBody.includes("executeCrud") ||
+  /\/internal\/v1\/crud\//.test(doGetBody)
+)
+  fail("doGet must not route to internal CRUD");
 
-// doPost's only routed operation is the internal-auth ingress at
+// doPost's only routed operations are the internal-auth ingress at
 // /v1/internal/auth, calling the frozen executeInternalAuthPhase03B entrypoint
-// (which itself calls the frozen executeInternalAuth dispatcher). It must
-// never expose rotate_session/revoke_session or perform dynamic/caller-keyed
-// function dispatch.
+// (which itself calls the frozen executeInternalAuth dispatcher), and the
+// MVP-2A internal-CRUD ingress at /v1/internal/crud, calling
+// executeCrudPhase2A. It must never expose rotate_session/revoke_session or
+// perform dynamic/caller-keyed function dispatch.
 const doPostBody = globalFunctionBody(code, "doPost");
 if (!doPostBody.includes("executeInternalAuthPhase03B"))
   fail(
@@ -153,6 +160,15 @@ if (
   !code.includes("'/v1/internal/auth'")
 )
   fail("the internal-auth ingress route /v1/internal/auth is missing");
+if (!doPostBody.includes("executeCrudPhase2A"))
+  fail(
+    "doPost must route the internal-CRUD ingress through executeCrudPhase2A",
+  );
+if (
+  !code.includes('"/v1/internal/crud"') &&
+  !code.includes("'/v1/internal/crud'")
+)
+  fail("the internal-CRUD ingress route /v1/internal/crud is missing");
 for (const forbiddenOperation of ["rotate_session", "revoke_session"]) {
   if (doPostBody.includes(forbiddenOperation))
     fail(

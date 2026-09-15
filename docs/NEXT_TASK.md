@@ -1,4 +1,4 @@
-# Next Task — MVP-2: Core Tracker CRUD (planning only, not started)
+# Next Task — MVP-2: Core Tracker CRUD (MVP-2A implemented, MVP-2B–2F not started)
 
 Roadmap reference: **`docs/MVP_COMPLETION_PLAN.md`** — Owner Approved (2026-09-15), along with
 decisions D-035/D-036.
@@ -8,8 +8,9 @@ versioning, status-transition matrix, audit primitives — see `apps-script/core
 `versioning.ts`, `lock.ts`, `audit.ts`, `status-transitions.ts`), and the frozen Phase 03A/03B/03C1
 authentication chain MVP-1 now fronts.
 
-Status: **Planning only. Not implemented.** See "MVP-2 — Core Tracker CRUD (planned)" below for
-the full specification required before any implementation begins.
+Status: **MVP-2A implemented locally as a checkpoint commit (2026-09-16); not Owner Approved.**
+MVP-2B–2F remain planning-only. See "MVP-2 — Core Tracker CRUD (planned)" below for the full
+specification, and "MVP-2A result (2026-09-16)" for what was actually built and verified.
 
 ## Roadmap change (2026-09-15, Owner Approved)
 
@@ -55,14 +56,68 @@ MVP-2 is the largest remaining batch (estimated 4–6 sessions in the roadmap). 
 each batch reviewable and independently verifiable, and lets RBAC/versioning/audit patterns get
 proven once (MVP-2A) before being repeated across the remaining entity/role surfaces.
 
-| Batch | Scope | Depends on |
-| --- | --- | --- |
-| MVP-2A | Shared contracts, Apps Script repository layer, Admin Plans CRUD | MVP-1 (auth ingress pattern) |
-| MVP-2B | Admin Users/role assignments and account-status management | MVP-2A (repository layer) |
-| MVP-2C | Applications create/read/update foundation | MVP-2A, MVP-2B (agent/processor assignment needs Users) |
-| MVP-2D | Agent own-application workflow (create, view own) | MVP-2C |
-| MVP-2E | Processor queue/assignment/status transitions | MVP-2C, MVP-2D |
-| MVP-2F | Integration verification, audits, and regression across 2A–2E | MVP-2A..2E |
+| Batch | Scope | Depends on | Status |
+| --- | --- | --- | --- |
+| MVP-2A | Shared contracts, Apps Script repository layer, Admin Plans CRUD | MVP-1 (auth ingress pattern) | **Implemented locally, checkpoint commit. Not Owner Approved.** |
+| MVP-2B | Admin Users/role assignments and account-status management | MVP-2A (repository layer) | Not started |
+| MVP-2C | Applications create/read/update foundation | MVP-2A, MVP-2B (agent/processor assignment needs Users) | Not started |
+| MVP-2D | Agent own-application workflow (create, view own) | MVP-2C | Not started |
+| MVP-2E | Processor queue/assignment/status transitions | MVP-2C, MVP-2D | Not started |
+| MVP-2F | Integration verification, audits, and regression across 2A–2E | MVP-2A..2E | Not started |
+
+### MVP-2A result (2026-09-16)
+
+Implemented and locally verified per the spec below, as a checkpoint commit (not Owner Approved —
+see D-039). Summary:
+
+- `apps-script/core/contracts.ts`: added the explicit `CrudOperation` union (`plans_list` |
+  `plans_create` | `plans_update`) and `PlanRecord`/`PlanStatus` types. No dynamic/caller-keyed
+  dispatch, mirroring `auth-domain.ts`'s `Operation` union.
+- `apps-script/core/plans-repository.ts` (new): header-addressed `PlansRepository` (list/find/
+  create/update) over the frozen `Plans` sheet, following `sheet-auth-store.ts`'s shape.
+- `apps-script/core/crud-domain.ts` (new): `executeCrud(operation, envelope, deps)` — verifies the
+  signed envelope with the same `verifyEnvelope` auth uses, requires a valid session for every
+  operation via two additive exports from `auth-domain.ts` (`resolveAuthenticatedActor`,
+  `requireSessionCsrf`, wrapping the previously private `validSession`/CSRF check unchanged),
+  derives the actor `{userId, role}` only from the session, and enforces RBAC: `plans_list` scopes
+  non-Admins to `plan_status=Active`; `plans_create`/`plans_update` require Admin. Every mutation
+  appends one `Activity_Logs` row via the unchanged `appendActivityLog`.
+- `apps-script/core/crud-ingress.ts` (new): strict ingress mirroring `auth-ingress.ts` exactly
+  (path/postData/media-type/16 KiB/JSON/outer-key/allowlist validation) for the new
+  `POST /v1/internal/crud` route, wired into `handlePost`/`doPost` as a second allowlisted route
+  alongside `/v1/internal/auth` — never a second unauthenticated entrypoint. `doGet` and the
+  frozen auth route are unchanged; `gas:check` was extended to enforce this.
+- Optimistic concurrency: the frozen Phase 02 `Plans` schema has no `version` column, so Plans use
+  `updated_at` as the client-supplied concurrency token (`expected_updated_at`) instead of
+  `assertCurrentVersion`, which remains reserved for `Applications.version` per schema. A mismatch
+  raises `CrudConflictError` → `CONFLICT`, matching §F's intent.
+- Pagination: 25-row default / 50-row max page size, numeric-offset cursor via the existing
+  `ApiMeta.nextCursor` — no new pagination shape.
+- BFF: `server/crud/apps-script-crud-client.ts` (new signed-envelope client mirroring
+  `apps-script-client.ts`, posting to a new `APPS_SCRIPT_CRUD_URL` env var — a sibling route on the
+  same Apps Script deployment, reusing the existing HMAC key ring/audience, not a new trust
+  boundary) and `server/crud/routes/plans.ts` implementing `GET/POST /api/plans` and
+  `PATCH /api/plans/:planId` (`api/plans/index.ts`, `api/plans/[planId].ts`). All routes require the
+  session cookie; mutations additionally require CSRF double-submit and an Origin check. Responses
+  use the existing `BffResponse<T>` envelope; errors map onto the existing `BffErrorCode` taxonomy
+  (no new codes) — `AUTH_DENIED`→`SESSION_EXPIRED`, `VALIDATION_ERROR`→`VALIDATION_ERROR`,
+  `FORBIDDEN`→`FORBIDDEN`, `NOT_FOUND`→`NOT_FOUND`, `CONFLICT`→`REPLAY_OR_CONFLICT`.
+- No frontend/dashboard file was touched; `DashboardShell` navigation remains inert, per §K.
+
+**Verification (local; no live external resource used):** 96/96 Apps Script tests (was 57, +39:
+12 CRUD-domain, 24 CRUD-ingress, 3 Plans-repository), 300/300 total unit tests (was 240, +60: the
+39 above + 20 new BFF Plans-route tests + 1 new env test), `npm run format`/`format:check`,
+`npm run lint` (0 errors, same one pre-existing warning), `npm run typecheck`, `npm run gas:build`/
+`gas:check` (both updated to require the new route/entrypoint and to confirm `doGet` still never
+reaches it), `npm run build` (production bundle scanned clean of secrets, including the new
+`APPS_SCRIPT_CRUD_URL`), `npx playwright test` (19/19 unchanged), a credential/secret grep over the
+diff (clean), and `git diff --check` (clean, only benign CRLF-conversion warnings). Committed
+locally (not pushed) as `feat(mvp-2a): implement plans crud foundation`.
+
+**Known limitations:** local/mocked only — no live Apps Script deployment, live Google/Upstash, or
+Vercel Preview was used; that remains MVP-4. `plans_update`'s allowed-fields set is the full Plans
+entity (name/price/speed/status) per §D; no separate deactivate-only endpoint was added. MVP-2A
+does not implement Users, Applications, or any other MVP-2B–2F scope.
 
 Each batch ends in a working, independently testable slice; none is implemented until explicitly
 instructed, batch by batch.
@@ -609,6 +664,9 @@ passes. Old Phase 03C2 is superseded by MVP-1 and old Phase 03D by MVP-4.
   login/dashboard-auth UI changes require an explicit owner change request.
 - **Phase 03C1A: Ready for Owner Review** (unchanged; committed locally, not pushed). Live
   acceptance deferred to MVP-4.
-- **MVP-2 — Core Tracker CRUD: Planning only, not started.** Split into MVP-2A–2F (see above);
-  full route/RBAC/transition/validation/concurrency/audit/pagination/error/test specification is
-  recorded above and must be reviewed before any implementation begins.
+- **MVP-2 — Core Tracker CRUD: MVP-2A implemented locally (checkpoint commit, not Owner
+  Approved), MVP-2B–2F not started.** Split into MVP-2A–2F (see above); full
+  route/RBAC/transition/validation/concurrency/audit/pagination/error/test specification is
+  recorded above. MVP-2A (shared `CrudOperation` contracts, `PlansRepository`, the internal-CRUD
+  ingress, and Admin Plans CRUD) is committed locally (not pushed) as
+  `feat(mvp-2a): implement plans crud foundation`.

@@ -2,6 +2,7 @@ import { Redis } from "@upstash/redis";
 import { randomUUID } from "node:crypto";
 
 import { createAppsScriptAuthClient } from "./apps-script-client";
+import { createAppsScriptCrudClient } from "../crud/apps-script-crud-client";
 import { nodeCryptoAdapter, randomToken, sha256Base64Url } from "./crypto";
 import { loadServerAuthEnv, type ServerAuthEnv } from "./env";
 import {
@@ -39,6 +40,19 @@ export function buildRouteDependencies(
     { now: () => new Date() },
   );
 
+  const appsScriptCrud = createAppsScriptCrudClient(
+    {
+      internalUrl: env.appsScriptCrudUrl,
+      audience: env.internalAudience,
+      signingKey: {
+        keyId: env.internalHmacActiveKeyId,
+        secret: activeKey.secret,
+      },
+    },
+    nodeCryptoAdapter,
+    { now: () => new Date() },
+  );
+
   return {
     clock: { now: () => new Date() },
     requestId: { generate: () => randomUUID() },
@@ -48,6 +62,7 @@ export function buildRouteDependencies(
     nonceStore: createUpstashNonceStore(redis, sha256Base64Url, randomToken),
     rateLimiter: createUpstashRateLimiter(redis),
     appsScript,
+    appsScriptCrud,
     rateLimitKeySecret: env.rateLimitKeySecret,
     sessionIdleSeconds: SESSION_IDLE_SECONDS,
     sessionAbsoluteSeconds: SESSION_ABSOLUTE_SECONDS,

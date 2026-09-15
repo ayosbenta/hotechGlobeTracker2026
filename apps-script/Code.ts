@@ -15,6 +15,9 @@ import { loadAuthConfig } from "./core/auth-config";
 import { appsScriptCrypto } from "./core/apps-script-auth-crypto";
 import { executeInternalAuth, type Operation } from "./core/auth-domain";
 import { SheetAuthStore } from "./core/sheet-auth-store";
+import { executeCrud } from "./core/crud-domain";
+import { PlansRepository } from "./core/plans-repository";
+import type { CrudOperation } from "./core/contracts";
 import {
   cleanupPhase03BAcceptanceData as cleanupPhase03BAcceptanceDataInternal,
   runPhase03BAcceptanceSuite as runPhase03BAcceptanceSuiteInternal,
@@ -50,9 +53,11 @@ export function doGet(event: AppsScriptEvent): unknown {
 }
 
 /**
- * The only routed POST path is the internal-auth ingress at
- * `/v1/internal/auth`, dispatching unchanged into the frozen Phase 03B
- * domain. Every other POST path retains the frozen safe NOT_FOUND response.
+ * The only routed POST paths are the internal-auth ingress at
+ * `/v1/internal/auth` and the internal-CRUD ingress at `/v1/internal/crud`,
+ * dispatching unchanged into the frozen Phase 03B domain and the MVP-2A CRUD
+ * domain respectively. Every other POST path retains the frozen safe
+ * NOT_FOUND response.
  */
 export function doPost(event: AppsScriptEvent): unknown {
   const { clock, uuidGenerator } = dependencies();
@@ -67,6 +72,8 @@ export function doPost(event: AppsScriptEvent): unknown {
             role?: string;
             sessionId?: string;
           },
+        internalCrud: (operation, envelope) =>
+          executeCrudPhase2A(operation, envelope),
       }),
     ),
   );
@@ -142,6 +149,36 @@ export function executeInternalAuthPhase03B(
       lock: { run: (work) => work() },
     }),
   );
+}
+
+/**
+ * MVP-2A CRUD domain entrypoint. Reuses the frozen Phase 03A/03B auth
+ * schema/store for session validation and the frozen script-lock primitive;
+ * deliberately not connected to doGet — only doPost's internal-CRUD ingress
+ * calls this.
+ */
+export function executeCrudPhase2A(
+  operation: CrudOperation,
+  envelope: unknown,
+): { data: unknown; nextCursor: string | null } {
+  const runtime = appsScriptRuntime();
+  const config = loadAuthConfig(
+    runtime.PropertiesService.getScriptProperties(),
+  );
+  return withScriptLock(runtime.LockService, () => {
+    const spreadsheet = runtime.SpreadsheetApp.openById(config.spreadsheetId);
+    const repository = new SheetRepository(spreadsheet);
+    return executeCrud(operation, envelope, {
+      config,
+      crypto: appsScriptCrypto(runtime.Utilities),
+      clock: systemClock,
+      ids: createAppsScriptUuidGenerator(runtime.Utilities),
+      authStore: new SheetAuthStore(spreadsheet),
+      lock: { run: (work) => work() },
+      plansRepository: new PlansRepository(repository.requiredSheet("Plans")),
+      activityLogSheet: repository.requiredSheet("Activity_Logs"),
+    });
+  });
 }
 
 /** Owner/editor-only evidence reconciliation; never routed through web handlers. */

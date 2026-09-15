@@ -8,6 +8,11 @@ import {
   type IngressDependencies,
   type IngressPostData,
 } from "./auth-ingress";
+import {
+  handleCrudRequest,
+  INTERNAL_CRUD_PATH,
+  type CrudIngressDependencies,
+} from "./crud-ingress";
 
 export interface WebRequestEvent {
   pathInfo?: string;
@@ -52,11 +57,18 @@ export interface PostDependencies {
    * every other POST path on the frozen safe not-found behavior.
    */
   internalAuth?: IngressDependencies["executeInternalAuth"];
+  /**
+   * Present only when the internal-CRUD ingress is wired. Its absence keeps
+   * `/v1/internal/crud` on the frozen safe not-found behavior, matching the
+   * internal-auth ingress pattern exactly.
+   */
+  internalCrud?: CrudIngressDependencies["executeCrud"];
 }
 
 /**
- * The only routed POST path is the internal-auth ingress at
- * `/v1/internal/auth`; every other path retains the frozen safe NOT_FOUND
+ * The only routed POST paths are the internal-auth ingress at
+ * `/v1/internal/auth` and the internal-CRUD ingress at
+ * `/v1/internal/crud`; every other path retains the frozen safe NOT_FOUND
  * response.
  */
 export function handlePost(
@@ -71,6 +83,16 @@ export function handlePost(
       clock: dependencies.clock,
       uuidGenerator: dependencies.uuidGenerator,
       executeInternalAuth: dependencies.internalAuth,
+    });
+  }
+  if (
+    dependencies.internalCrud !== undefined &&
+    parsePathInfo(event.pathInfo) === INTERNAL_CRUD_PATH
+  ) {
+    return handleCrudRequest(event, {
+      clock: dependencies.clock,
+      uuidGenerator: dependencies.uuidGenerator,
+      executeCrud: dependencies.internalCrud,
     });
   }
   const context = createRequestContext(

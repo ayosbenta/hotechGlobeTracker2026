@@ -8,6 +8,14 @@ import {
   AppsScriptDeniedError,
   AppsScriptUnavailableError,
 } from "../../auth/apps-script-client";
+import type {
+  AppsScriptCrudClient,
+  AppsScriptCrudResult,
+} from "../../crud/apps-script-crud-client";
+import {
+  AppsScriptDeniedError as CrudAppsScriptDeniedError,
+  AppsScriptUnavailableError as CrudAppsScriptUnavailableError,
+} from "../../crud/apps-script-crud-client";
 import {
   nodeCryptoAdapter,
   randomToken,
@@ -23,7 +31,12 @@ import { RateLimitUnavailableError } from "../../auth/rate-limit";
 import type { RateLimiter } from "../../auth/rate-limit";
 import type { RouteDependencies } from "../../auth/route-types";
 
-export { AppsScriptDeniedError, AppsScriptUnavailableError };
+export {
+  AppsScriptDeniedError,
+  AppsScriptUnavailableError,
+  CrudAppsScriptDeniedError,
+  CrudAppsScriptUnavailableError,
+};
 
 export function fakeAllowAllRateLimiter(): RateLimiter {
   return { check: vi.fn(async () => ({ allowed: true })) };
@@ -88,6 +101,17 @@ export function fakeAppsScriptClient(
   };
 }
 
+export function fakeAppsScriptCrudClient(
+  result: AppsScriptCrudResult | Error,
+): AppsScriptCrudClient {
+  return {
+    async execute() {
+      if (result instanceof Error) throw result;
+      return result;
+    },
+  };
+}
+
 export function baseRouteDependencies(
   overrides: Partial<RouteDependencies> = {},
 ): RouteDependencies {
@@ -100,6 +124,7 @@ export function baseRouteDependencies(
     nonceStore: fakeInMemoryNonceStore(),
     rateLimiter: fakeAllowAllRateLimiter(),
     appsScript: fakeAppsScriptClient(new Error("not configured")),
+    appsScriptCrud: fakeAppsScriptCrudClient(new Error("not configured")),
     rateLimitKeySecret: "r".repeat(32),
     sessionIdleSeconds: 1800,
     sessionAbsoluteSeconds: 28800,
