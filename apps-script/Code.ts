@@ -11,6 +11,7 @@ import {
   type MutableScriptProperties,
 } from "./core/auth-schema";
 import { appsScriptRuntime } from "./infrastructure/google-apps-script";
+import { bootstrapAdminUser as bootstrapAdminUserInternal } from "./core/admin-bootstrap";
 import { loadAuthConfig } from "./core/auth-config";
 import { appsScriptCrypto } from "./core/apps-script-auth-crypto";
 import { executeInternalAuth, type Operation } from "./core/auth-domain";
@@ -111,6 +112,35 @@ export function bootstrapSchema(): void {
       uuidGenerator,
     );
   });
+}
+
+/**
+ * Owner-run only, from the Apps Script editor. Appends the Admin row the BFF
+ * password login signs in as. Details come from Script Properties so no
+ * personal data is committed: ADMIN_BOOTSTRAP_EMAIL (must equal the BFF's
+ * ADMIN_EMAIL), ADMIN_BOOTSTRAP_FULL_NAME, and optional
+ * ADMIN_BOOTSTRAP_MOBILE. Safe to re-run; it never duplicates the row.
+ */
+export function bootstrapAdminUser(): string {
+  const runtime = appsScriptRuntime();
+  const properties = runtime.PropertiesService.getScriptProperties();
+  const config = loadServerConfig(properties);
+  const input = {
+    email: properties.getProperty("ADMIN_BOOTSTRAP_EMAIL") ?? "",
+    fullName: properties.getProperty("ADMIN_BOOTSTRAP_FULL_NAME") ?? "",
+    mobileNumber: properties.getProperty("ADMIN_BOOTSTRAP_MOBILE") ?? "",
+  };
+  const result = withScriptLock(runtime.LockService, () => {
+    const spreadsheet = runtime.SpreadsheetApp.openById(config.spreadsheetId);
+    const users = new SheetRepository(spreadsheet).requiredSheet("Users");
+    return bootstrapAdminUserInternal(users, input, systemClock);
+  });
+  runtime.Logger.log(
+    result === "created"
+      ? "Admin user bootstrapped."
+      : "Admin user already exists; nothing changed.",
+  );
+  return result;
 }
 
 /** Owner-run only. This is intentionally not a web route or live auth flow. */

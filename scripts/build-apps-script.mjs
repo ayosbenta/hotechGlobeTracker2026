@@ -29,6 +29,7 @@ await build({
       "function doGet(e) { return HotechGlobeTracker.doGet(e); }",
       "function doPost(e) { return HotechGlobeTracker.doPost(e); }",
       "function bootstrapSchema() { return HotechGlobeTracker.bootstrapSchema(); }",
+      "function bootstrapAdminUser() { return HotechGlobeTracker.bootstrapAdminUser(); }",
       "function migrateAuthSchemaPhase03A() { return HotechGlobeTracker.migrateAuthSchemaPhase03A(); }",
       "function reconcileAuthAuditPhase03B() { return HotechGlobeTracker.reconcileAuthAuditPhase03B(); }",
       "function runPhase03BAcceptanceSuite() { return HotechGlobeTracker.runPhase03BAcceptanceSuite(); }",

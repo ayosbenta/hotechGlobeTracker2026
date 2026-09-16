@@ -64,6 +64,7 @@ for (const entrypoint of [
   "doGet",
   "doPost",
   "bootstrapSchema",
+  "bootstrapAdminUser",
   "reconcileAuthAuditPhase03B",
   "runPhase03BAcceptanceSuite",
   "cleanupPhase03BAcceptanceData",
