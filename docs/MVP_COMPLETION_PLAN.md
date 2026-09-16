@@ -32,7 +32,7 @@ alter any frozen behavior.
 | MVP-1 — Authentication frontend | **Owner Approved / frozen** (2026-09-16) | Local/mocked scope only (D-037). 240/240 unit tests, 19/19 Playwright. Committed locally as `feat(mvp-1): ...`, not pushed. Future material login/dashboard-auth UI changes require an owner change request. |
 | MVP-2 — Core tracker CRUD | **Planning only** (2026-09-16) | Split into MVP-2A–2F (D-038); full specification recorded in `docs/NEXT_TASK.md`. Not started. |
 | MVP-3 — Dashboard live data | **Implemented locally (checkpoint commits, not Owner Approved).** | Data-source swap complete for all dashboard surfaces, including the two trend/productivity charts previously left on illustrative fixture data — resolved by D-047 (`applications_aggregate`). |
-| MVP-4 — Final isolated integration QA | **Not started** | Depends on MVP-1..3; unblocks 03C1A approval. |
+| MVP-4 — Final isolated integration QA | **Local tooling prepared (D-048); live execution not started.** | `npm run acceptance:mvp4` + `docs/MVP4_ACCEPTANCE_RUNBOOK.md` extend the Phase 03C1A acceptance pattern to the CRUD ingress, session lifecycle, and dashboard-data checks. No live isolated Sheet/Apps Script/Vercel resource has been created. Depends on MVP-1..3; unblocks 03C1A approval. |
 | MVP-5 — Production release | **Not started** | Requires explicit owner approval to execute. |
 | Uploads / Google Drive attachments | **Deferred post-MVP** | `Attachments` tab already exists in the frozen schema; unused for now. |
 | Advanced reports | **Deferred post-MVP** | |

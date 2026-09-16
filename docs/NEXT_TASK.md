@@ -1,4 +1,11 @@
-# Next Task — MVP-2/MVP-3 (MVP-2A-2F and MVP-3 implemented, MVP-3 trend-chart fix D-047 applied; MVP-4 not started)
+# Next Task — MVP-4 local acceptance tooling prepared (D-048); live execution not started
+
+MVP-2A-2F and MVP-3 are implemented locally (MVP-3 trend-chart fix D-047 applied). MVP-4's local
+acceptance tooling (`npm run acceptance:mvp4`, `docs/MVP4_ACCEPTANCE_RUNBOOK.md`) is now prepared
+and unit-tested — see "MVP-4 local tooling result" below — but no live isolated Sheet/Apps
+Script/Vercel resource has been created or exercised. The next step is entirely external: a human
+owner must provision the isolated resources listed in `docs/MVP4_ACCEPTANCE_RUNBOOK.md` §1 before
+`npm run acceptance:phase-03c1a` and `npm run acceptance:mvp4` can be run for real.
 
 Roadmap reference: **`docs/MVP_COMPLETION_PLAN.md`** — Owner Approved (2026-09-15), along with
 decisions D-035/D-036.
@@ -925,3 +932,61 @@ files (clean), and `git diff --check` (clean, only benign CRLF-conversion warnin
 --stat` confirmed only the expected 13 modified + 3 new files changed — no other dashboard visual/
 layout file was touched. No live external resource was used. Committed locally (not pushed) as
 `fix(mvp-3): replace dashboard trend fixtures with live aggregates`. See D-047.
+
+### MVP-4 local tooling result (2026-09-16, D-048)
+
+**Local preparation only — no live Google/Vercel/Upstash/Apps Script resource was accessed, no
+secret was generated or requested, and nothing was deployed.** Extends the existing, unchanged
+Phase 03C1A acceptance tooling (`server/acceptance/env.ts`, `phase-03c1a-runner.ts`,
+`scripts/run-phase-03c1a-acceptance.mjs`/`phase-03c1a-cli-entry.ts`, `npm run
+acceptance:phase-03c1a`) with a sibling runner covering the parts of MVP-4's scope the auth-only
+runner does not reach:
+
+- `server/acceptance/mvp4-env.ts`: fail-closed loader for `MVP4_AUTH_TARGET_URL` (must end
+  `/exec/v1/internal/auth`) and `MVP4_CRUD_TARGET_URL` (must end `/exec/v1/internal/crud`),
+  `MVP4_CONFIRM_NON_PRODUCTION` (exact literal), `MVP4_INTERNAL_AUDIENCE`, `MVP4_HMAC_KEY_ID`/
+  `MVP4_HMAC_SECRET`, `MVP4_TEST_ADMIN_EMAIL`/`MVP4_TEST_ADMIN_SUBJECT` — the exact same
+  non-production-confirmation/URL-suffix/production-looking-value-rejection pattern as
+  `server/acceptance/env.ts`, not a duplicate implementation with different (weaker) rules.
+- `server/acceptance/mvp4-runner.ts`: session lifecycle (`login_first_bind` →
+  `validate_session`), CRUD ingress RBAC (`plans_list` as Admin), CSRF (`plans_create` without
+  `csrf_token` expects `AUTH_DENIED`; with it, succeeds), a version/`expected_updated_at` conflict
+  case (`plans_update` with a deliberately stale token expects `CONFLICT`), a non-existent-target
+  case (expects a safe `NOT_FOUND`/`FORBIDDEN`/`VALIDATION_ERROR`, never a raw Sheet error), an
+  invalid-signature case (expects `AUTH_DENIED`), and a dashboard-data check
+  (`applications_aggregate` returns a validly shaped, bounded aggregate — see D-047). Reuses
+  `server/auth/signing.ts`'s `createInternalEnvelope` unchanged; duplicates no HMAC logic.
+- `server/acceptance/mvp4-synthetic-data.ts`: pure builder/predicate functions for synthetic
+  Plans/Applications rows, every field prefixed with the exact literal `__mvp4_test__`, mirroring
+  Phase 03B's D-026 `__phase03b_test__` isolation pattern exactly. `isMvp4SyntheticApplication`/
+  `isMvp4SyntheticPlan`/`selectMvp4SyntheticApplications`/`selectMvp4SyntheticPlans` use exact
+  `startsWith` matching only — never a fuzzy/substring match — so a cleanup step built on them can
+  never delete a real row. This module performs no network call and touches no real Sheet in this
+  stage; it is tooling with tests, not something executed against a live resource.
+- `scripts/run-mvp4-acceptance.mjs`/`scripts/mvp4-cli-entry.ts` and `npm run acceptance:mvp4`/
+  `acceptance:mvp4:check`, esbuild-bundled exactly like the Phase 03C1A CLI entrypoint. Confirmed
+  (`node scripts/run-mvp4-acceptance.mjs --check-only` with no `MVP4_*` variables set) that it
+  fails closed with a clear config-missing message and attempts no network call when unconfigured.
+- `docs/MVP4_ACCEPTANCE_RUNBOOK.md` (new): the full MVP-4 procedure — isolated resources needed
+  (§1), exact env var names (never values), the local tooling's usage (§2), the manual steps this
+  tooling does not automate (real GIS login, cookie/session-timeout observation, a full
+  create/assign/transition/dashboard-refresh click-through, §3), teardown (§4), and a
+  result-recording template — documentation only, not executed as part of this stage.
+
+**Verification (local; no live external resource used):** 453/453 total unit tests (was 423, +30:
+12 `mvp4-acceptance-env` config tests, 10 `mvp4-runner` tests with a mocked fetcher, 8
+`mvp4-synthetic-data` predicate/builder tests), 156/156 Apps Script tests unchanged (no Apps
+Script file was touched by this stage), `npm run format`/`format:check` clean, `npm run lint`
+(0 errors, same one pre-existing warning), `npm run typecheck` clean, `npm run gas:build`/
+`gas:check` passing unchanged, `npm run build` (production bundle scanned clean of the new
+`MVP4_*` secret-name substrings), `npx playwright test` (19/19 unchanged), a credential/secret
+grep over the new files (clean), and `git diff --check` (clean, only a benign CRLF-conversion
+warning on `package.json`). No existing acceptance tooling's fail-closed guards were weakened.
+Committed locally (not pushed) as `test(mvp-4): prepare isolated integration acceptance tooling`.
+See D-048.
+
+**Known limitations:** this stage is tooling/documentation only. No isolated Sheet, Apps Script
+Web App deployment, Vercel Preview, Google OAuth Web Client, or Upstash instance was created. The
+next step is external and owner-driven: see `docs/MVP4_ACCEPTANCE_RUNBOOK.md` §1 for the exact
+resource checklist before `npm run acceptance:phase-03c1a` / `npm run acceptance:mvp4` can be run
+against a live deployment.

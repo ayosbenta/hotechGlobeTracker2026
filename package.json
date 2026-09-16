@@ -20,7 +20,9 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "acceptance:phase-03c1a": "node scripts/run-phase-03c1a-acceptance.mjs",
-    "acceptance:phase-03c1a:check": "node scripts/run-phase-03c1a-acceptance.mjs --check-only"
+    "acceptance:phase-03c1a:check": "node scripts/run-phase-03c1a-acceptance.mjs --check-only",
+    "acceptance:mvp4": "node scripts/run-mvp4-acceptance.mjs",
+    "acceptance:mvp4:check": "node scripts/run-mvp4-acceptance.mjs --check-only"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.3",
