@@ -1,4 +1,14 @@
-# Next Task — MVP-4 local acceptance tooling prepared (D-048); live execution not started
+# Next Task — awaiting owner review of the password-auth migration plan (D-049)
+
+**Pending owner decision, blocking further implementation on the auth path:** an owner change
+request to replace GIS/OIDC login with Admin-managed password authentication is recorded as D-049,
+with a full planning-only impact report in `docs/PASSWORD_AUTH_IMPACT_PLAN.md`. No code has been
+changed. MVP-4's live external-resource provisioning (below) is unaffected by this and may proceed
+in parallel, but its "Google OAuth Web Client" step and its GIS-login manual acceptance case will
+need to be redone once/if the password-auth migration is approved and implemented — provisioning
+that one specific resource now would be wasted if the migration proceeds. The owner should read
+`docs/PASSWORD_AUTH_IMPACT_PLAN.md` and confirm whether to proceed with implementation, and resolve
+its four open judgment calls, before that work begins.
 
 MVP-2A-2F and MVP-3 are implemented locally (MVP-3 trend-chart fix D-047 applied). MVP-4's local
 acceptance tooling (`npm run acceptance:mvp4`, `docs/MVP4_ACCEPTANCE_RUNBOOK.md`) is now prepared
