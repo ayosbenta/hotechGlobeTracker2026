@@ -1,5 +1,5 @@
-import type { CryptoAdapter } from "../auth/crypto";
-import { createInternalEnvelope, type SigningKey } from "../auth/signing";
+import type { CryptoAdapter } from "../auth/crypto.js";
+import { createInternalEnvelope, type SigningKey } from "../auth/signing.js";
 
 export type CrudOperation =
   | "plans_list"

@@ -1,5 +1,5 @@
-import type { CryptoAdapter } from "./crypto";
-import { createInternalEnvelope, type SigningKey } from "./signing";
+import type { CryptoAdapter } from "./crypto.js";
+import { createInternalEnvelope, type SigningKey } from "./signing.js";
 
 export type InternalOperation =
   | "login_first_bind"

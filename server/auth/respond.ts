@@ -1,11 +1,11 @@
-import { authSecurityHeaders } from "./security-headers";
+import { authSecurityHeaders } from "./security-headers.js";
 import {
   BFF_STATUS_BY_CODE,
   BffError,
   bffFailure,
   bffSuccess,
-} from "./http-envelope";
-import type { RouteResponse } from "./route-types";
+} from "./http-envelope.js";
+import type { RouteResponse } from "./route-types.js";
 
 export function jsonSuccess<T>(
   requestId: string,

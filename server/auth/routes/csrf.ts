@@ -1,22 +1,22 @@
 import {
   AppsScriptDeniedError,
   AppsScriptUnavailableError,
-} from "../apps-script-client";
+} from "../apps-script-client.js";
 import {
   clearSessionCookie,
   CSRF_COOKIE_NAME,
   csrfCookie,
   parseCookies,
   SESSION_COOKIE_NAME,
-} from "../cookies";
-import { BffError } from "../http-envelope";
-import { privacyKeyFor, RateLimitUnavailableError } from "../rate-limit";
-import { jsonFailure, jsonSuccess } from "../respond";
+} from "../cookies.js";
+import { BffError } from "../http-envelope.js";
+import { privacyKeyFor, RateLimitUnavailableError } from "../rate-limit.js";
+import { jsonFailure, jsonSuccess } from "../respond.js";
 import type {
   RouteDependencies,
   RouteRequest,
   RouteResponse,
-} from "../route-types";
+} from "../route-types.js";
 
 export async function handleCsrfRoute(
   request: RouteRequest,

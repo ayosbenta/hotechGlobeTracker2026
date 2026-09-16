@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
-import { verifyPassword } from "./password-hash";
+import { verifyPassword } from "./password-hash.js";
 
 /**
  * Single hardcoded Admin login (owner request: Google OAuth removed). Only a

@@ -2,11 +2,11 @@ import {
   canonicalJson,
   createInternalEnvelope,
   signingInput,
-} from "../auth/signing";
-import type { SignedEnvelope, SigningKey } from "../auth/signing";
-import { nodeCryptoAdapter, randomJti, randomToken } from "../auth/crypto";
-import type { CryptoAdapter } from "../auth/crypto";
-import type { AcceptanceRunnerConfig } from "./env";
+} from "../auth/signing.js";
+import type { SignedEnvelope, SigningKey } from "../auth/signing.js";
+import { nodeCryptoAdapter, randomJti, randomToken } from "../auth/crypto.js";
+import type { CryptoAdapter } from "../auth/crypto.js";
+import type { AcceptanceRunnerConfig } from "./env.js";
 
 /**
  * Standalone, repository-owned Phase 03C1A live acceptance runner. It never

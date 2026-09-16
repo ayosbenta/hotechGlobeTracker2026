@@ -1,5 +1,5 @@
-import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, parseCookies } from "./cookies";
-import { constantTimeEquals } from "./crypto";
+import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, parseCookies } from "./cookies.js";
+import { constantTimeEquals } from "./crypto.js";
 
 export interface CsrfCheckInput {
   cookieHeader: string | undefined | null;

@@ -1,20 +1,20 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { handleCsrfRoute } from "../../server/auth/routes/csrf";
-import { handleLoginRoute } from "../../server/auth/routes/login";
-import { handleLogoutRoute } from "../../server/auth/routes/logout";
-import { handleMeRoute } from "../../server/auth/routes/me";
+import { handleCsrfRoute } from "../../server/auth/routes/csrf.js";
+import { handleLoginRoute } from "../../server/auth/routes/login.js";
+import { handleLogoutRoute } from "../../server/auth/routes/logout.js";
+import { handleMeRoute } from "../../server/auth/routes/me.js";
 import {
   readJsonBody,
   toRouteRequest,
   writeRouteResponse,
-} from "../../server/auth/vercel-adapter";
-import { createRouteDependencies } from "../../server/auth/wiring";
+} from "../../server/auth/vercel-adapter.js";
+import { createRouteDependencies } from "../../server/auth/wiring.js";
 import type {
   RouteDependencies,
   RouteRequest,
   RouteResponse,
-} from "../../server/auth/route-types";
+} from "../../server/auth/route-types.js";
 
 export const config = { runtime: "nodejs" };
 
@@ -55,7 +55,8 @@ export default async function handler(
     request.method === "POST" ? await readJsonBody(request) : undefined;
   const routeRequest = toRouteRequest(request, body);
 
-  const route = segments.length === 1 ? AUTH_ROUTES[segments[0] ?? ""] : undefined;
+  const route =
+    segments.length === 1 ? AUTH_ROUTES[segments[0] ?? ""] : undefined;
   const routeResponse = route
     ? await route(routeRequest, createRouteDependencies())
     : notFound();

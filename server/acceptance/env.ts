@@ -1,4 +1,4 @@
-import type { SigningKey } from "../auth/signing";
+import type { SigningKey } from "../auth/signing.js";
 
 /**
  * Minimal, dedicated environment loader for the Phase 03C1A live acceptance

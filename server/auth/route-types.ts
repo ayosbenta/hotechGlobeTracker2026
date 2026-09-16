@@ -1,7 +1,7 @@
-import type { AppsScriptAuthClient } from "./apps-script-client";
-import type { AppsScriptCrudClient } from "../crud/apps-script-crud-client";
-import type { CryptoAdapter } from "./crypto";
-import type { RateLimiter } from "./rate-limit";
+import type { AppsScriptAuthClient } from "./apps-script-client.js";
+import type { AppsScriptCrudClient } from "../crud/apps-script-crud-client.js";
+import type { CryptoAdapter } from "./crypto.js";
+import type { RateLimiter } from "./rate-limit.js";
 
 export interface RouteRequest {
   method: string;

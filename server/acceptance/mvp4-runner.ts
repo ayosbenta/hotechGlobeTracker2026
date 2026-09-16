@@ -1,12 +1,12 @@
-import { createInternalEnvelope, signingInput } from "../auth/signing";
-import type { SignedEnvelope } from "../auth/signing";
-import { nodeCryptoAdapter, randomToken } from "../auth/crypto";
-import type { CryptoAdapter } from "../auth/crypto";
-import type { Mvp4AcceptanceConfig } from "./mvp4-env";
+import { createInternalEnvelope, signingInput } from "../auth/signing.js";
+import type { SignedEnvelope } from "../auth/signing.js";
+import { nodeCryptoAdapter, randomToken } from "../auth/crypto.js";
+import type { CryptoAdapter } from "../auth/crypto.js";
+import type { Mvp4AcceptanceConfig } from "./mvp4-env.js";
 import {
   buildSyntheticApplicationPayload,
   buildSyntheticPlanPayload,
-} from "./mvp4-synthetic-data";
+} from "./mvp4-synthetic-data.js";
 
 /**
  * MVP-4 local acceptance runner: extends the Phase 03C1A pattern

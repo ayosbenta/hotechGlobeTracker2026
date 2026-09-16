@@ -4,14 +4,14 @@ import {
   handleCreatePlanRoute,
   handleListPlansRoute,
   handleUpdatePlanRoute,
-} from "../../server/crud/routes/plans";
+} from "../../server/crud/routes/plans.js";
 import {
   readJsonBody,
   toRouteRequest,
   writeRouteResponse,
-} from "../../server/auth/vercel-adapter";
-import { createRouteDependencies } from "../../server/auth/wiring";
-import type { RouteResponse } from "../../server/auth/route-types";
+} from "../../server/auth/vercel-adapter.js";
+import { createRouteDependencies } from "../../server/auth/wiring.js";
+import type { RouteResponse } from "../../server/auth/route-types.js";
 
 export const config = { runtime: "nodejs" };
 

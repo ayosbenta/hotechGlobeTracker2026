@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { RouteRequest, RouteResponse } from "./route-types";
+import type { RouteRequest, RouteResponse } from "./route-types.js";
 
 interface MinimalVercelRequest extends IncomingMessage {
   body?: unknown;

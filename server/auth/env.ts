@@ -1,4 +1,4 @@
-import { DEFAULT_ADMIN_PROVIDER_SUBJECT } from "./admin-credentials";
+import { DEFAULT_ADMIN_PROVIDER_SUBJECT } from "./admin-credentials.js";
 
 export type HmacKeyStatus = "active" | "retiring" | "disabled";
 export interface HmacKey {

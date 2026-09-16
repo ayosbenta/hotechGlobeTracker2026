@@ -1,26 +1,26 @@
 import {
   AppsScriptDeniedError,
   AppsScriptUnavailableError,
-} from "../apps-script-crud-client";
+} from "../apps-script-crud-client.js";
 import {
   clearSessionCookie,
   CSRF_HEADER_NAME,
   parseCookies,
   SESSION_COOKIE_NAME,
-} from "../../auth/cookies";
-import { verifyCsrfDoubleSubmit } from "../../auth/csrf";
-import { BffError } from "../../auth/http-envelope";
-import { originIsAllowed } from "../../auth/origin-check";
+} from "../../auth/cookies.js";
+import { verifyCsrfDoubleSubmit } from "../../auth/csrf.js";
+import { BffError } from "../../auth/http-envelope.js";
+import { originIsAllowed } from "../../auth/origin-check.js";
 import {
   privacyKeyFor,
   RateLimitUnavailableError,
-} from "../../auth/rate-limit";
-import { jsonFailure, jsonSuccess } from "../../auth/respond";
+} from "../../auth/rate-limit.js";
+import { jsonFailure, jsonSuccess } from "../../auth/respond.js";
 import type {
   RouteDependencies,
   RouteRequest,
   RouteResponse,
-} from "../../auth/route-types";
+} from "../../auth/route-types.js";
 
 function requireSessionToken(request: RouteRequest): string {
   const cookies = parseCookies(request.cookieHeader);

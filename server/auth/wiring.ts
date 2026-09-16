@@ -1,13 +1,13 @@
 import { Redis } from "@upstash/redis";
 import { randomUUID } from "node:crypto";
 
-import { verifyAdminCredentials } from "./admin-credentials";
-import { createAppsScriptAuthClient } from "./apps-script-client";
-import { createAppsScriptCrudClient } from "../crud/apps-script-crud-client";
-import { nodeCryptoAdapter, randomToken } from "./crypto";
-import { loadServerAuthEnv, type ServerAuthEnv } from "./env";
-import { createUpstashRateLimiter } from "./rate-limit";
-import type { RouteDependencies } from "./route-types";
+import { verifyAdminCredentials } from "./admin-credentials.js";
+import { createAppsScriptAuthClient } from "./apps-script-client.js";
+import { createAppsScriptCrudClient } from "../crud/apps-script-crud-client.js";
+import { nodeCryptoAdapter, randomToken } from "./crypto.js";
+import { loadServerAuthEnv, type ServerAuthEnv } from "./env.js";
+import { createUpstashRateLimiter } from "./rate-limit.js";
+import type { RouteDependencies } from "./route-types.js";
 
 const SESSION_IDLE_SECONDS = 1800;
 const SESSION_ABSOLUTE_SECONDS = 28800;

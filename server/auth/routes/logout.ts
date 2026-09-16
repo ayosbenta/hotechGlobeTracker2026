@@ -5,17 +5,17 @@ import {
   CSRF_HEADER_NAME,
   parseCookies,
   SESSION_COOKIE_NAME,
-} from "../cookies";
-import { verifyCsrfDoubleSubmit } from "../csrf";
-import { BffError } from "../http-envelope";
-import { originIsAllowed } from "../origin-check";
-import { privacyKeyFor } from "../rate-limit";
-import { jsonFailure, jsonSuccess } from "../respond";
+} from "../cookies.js";
+import { verifyCsrfDoubleSubmit } from "../csrf.js";
+import { BffError } from "../http-envelope.js";
+import { originIsAllowed } from "../origin-check.js";
+import { privacyKeyFor } from "../rate-limit.js";
+import { jsonFailure, jsonSuccess } from "../respond.js";
 import type {
   RouteDependencies,
   RouteRequest,
   RouteResponse,
-} from "../route-types";
+} from "../route-types.js";
 
 const LOGOUT_CLEAR_COOKIES = [
   clearSessionCookie(),

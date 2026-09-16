@@ -1,21 +1,21 @@
 import {
   AppsScriptDeniedError,
   AppsScriptUnavailableError,
-} from "../apps-script-client";
+} from "../apps-script-client.js";
 import {
   clearSessionCookie,
   parseCookies,
   SESSION_COOKIE_NAME,
-} from "../cookies";
-import { BffError } from "../http-envelope";
-import { privacyKeyFor } from "../rate-limit";
-import { jsonFailure, jsonSuccess } from "../respond";
-import { roleRedirectFor } from "../roles";
+} from "../cookies.js";
+import { BffError } from "../http-envelope.js";
+import { privacyKeyFor } from "../rate-limit.js";
+import { jsonFailure, jsonSuccess } from "../respond.js";
+import { roleRedirectFor } from "../roles.js";
 import type {
   RouteDependencies,
   RouteRequest,
   RouteResponse,
-} from "../route-types";
+} from "../route-types.js";
 
 export async function handleMeRoute(
   request: RouteRequest,

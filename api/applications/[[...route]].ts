@@ -7,14 +7,14 @@ import {
   handleGetApplicationsAggregateRoute,
   handleListApplicationsRoute,
   handleUpdateApplicationRoute,
-} from "../../server/crud/routes/applications";
+} from "../../server/crud/routes/applications.js";
 import {
   readJsonBody,
   toRouteRequest,
   writeRouteResponse,
-} from "../../server/auth/vercel-adapter";
-import { createRouteDependencies } from "../../server/auth/wiring";
-import type { RouteResponse } from "../../server/auth/route-types";
+} from "../../server/auth/vercel-adapter.js";
+import { createRouteDependencies } from "../../server/auth/wiring.js";
+import type { RouteResponse } from "../../server/auth/route-types.js";
 
 export const config = { runtime: "nodejs" };
 

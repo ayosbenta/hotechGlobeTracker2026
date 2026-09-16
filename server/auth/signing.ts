@@ -1,5 +1,5 @@
-import { randomJti } from "./crypto";
-import type { CryptoAdapter } from "./crypto";
+import { randomJti } from "./crypto.js";
+import type { CryptoAdapter } from "./crypto.js";
 
 /**
  * Port of apps-script/core/auth-envelope.ts canonical() and signingInput().

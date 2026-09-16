@@ -1,18 +1,18 @@
 import {
   AppsScriptDeniedError,
   AppsScriptUnavailableError,
-} from "../apps-script-client";
-import { sessionCookie, csrfCookie } from "../cookies";
-import { BffError } from "../http-envelope";
-import { originIsAllowed } from "../origin-check";
-import { privacyKeyFor, RateLimitUnavailableError } from "../rate-limit";
-import { jsonFailure, jsonSuccess } from "../respond";
-import { roleRedirectFor } from "../roles";
+} from "../apps-script-client.js";
+import { sessionCookie, csrfCookie } from "../cookies.js";
+import { BffError } from "../http-envelope.js";
+import { originIsAllowed } from "../origin-check.js";
+import { privacyKeyFor, RateLimitUnavailableError } from "../rate-limit.js";
+import { jsonFailure, jsonSuccess } from "../respond.js";
+import { roleRedirectFor } from "../roles.js";
 import type {
   RouteDependencies,
   RouteRequest,
   RouteResponse,
-} from "../route-types";
+} from "../route-types.js";
 
 const MAX_FIELD_LENGTH = 256;
 
