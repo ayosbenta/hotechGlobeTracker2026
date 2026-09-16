@@ -4,6 +4,7 @@ import {
   handleAssignApplicationRoute,
   handleCreateApplicationRoute,
   handleGetApplicationRoute,
+  handleGetApplicationsAggregateRoute,
   handleListApplicationsRoute,
   handleUpdateApplicationRoute,
 } from "../../crud/routes/applications";
@@ -109,6 +110,97 @@ describe("GET /api/applications", () => {
       baseRouteDependencies(),
     );
     expect(response.status).toBe(404);
+  });
+});
+
+describe("GET /api/applications/aggregate", () => {
+  it("returns 401 when no session cookie is present", async () => {
+    const response = await handleGetApplicationsAggregateRoute(
+      request({ cookieHeader: null }),
+      baseRouteDependencies(),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("returns the aggregate on success, forwarding only the session token", async () => {
+    const aggregate = {
+      rangeStartDate: "2026-09-03",
+      rangeEndDate: "2026-09-16",
+      buckets: [],
+    };
+    let capturedPayload: Record<string, unknown> | undefined;
+    const response = await handleGetApplicationsAggregateRoute(
+      request(),
+      baseRouteDependencies({
+        appsScriptCrud: {
+          execute: async (_operation, payload) => {
+            capturedPayload = payload;
+            return { data: aggregate, nextCursor: null };
+          },
+        },
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = response.body as { data: { aggregate: unknown } };
+    expect(body.data.aggregate).toEqual(aggregate);
+    expect(capturedPayload).toEqual({ session_token: "session-token" });
+  });
+
+  it("stays available when the rate limiter itself is down", async () => {
+    const response = await handleGetApplicationsAggregateRoute(
+      request(),
+      baseRouteDependencies({
+        rateLimiter: fakeOutageRateLimiter(),
+        appsScriptCrud: fakeAppsScriptCrudClient({
+          data: { rangeStartDate: "", rangeEndDate: "", buckets: [] },
+          nextCursor: null,
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("returns 429 when the rate limiter denies", async () => {
+    const response = await handleGetApplicationsAggregateRoute(
+      request(),
+      baseRouteDependencies({ rateLimiter: fakeDenyingRateLimiter() }),
+    );
+    expect(response.status).toBe(429);
+  });
+
+  it("returns 503 when Apps Script is unavailable", async () => {
+    const response = await handleGetApplicationsAggregateRoute(
+      request(),
+      baseRouteDependencies({
+        appsScriptCrud: fakeAppsScriptCrudClient(
+          new CrudAppsScriptUnavailableError(),
+        ),
+      }),
+    );
+    expect(response.status).toBe(503);
+  });
+
+  it("returns 404 for a non-GET method", async () => {
+    const response = await handleGetApplicationsAggregateRoute(
+      request({ method: "DELETE" }),
+      baseRouteDependencies(),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("clears the session cookie when Apps Script denies with AUTH_DENIED", async () => {
+    const response = await handleGetApplicationsAggregateRoute(
+      request(),
+      baseRouteDependencies({
+        appsScriptCrud: fakeAppsScriptCrudClient(
+          new CrudAppsScriptDeniedError("AUTH_DENIED"),
+        ),
+      }),
+    );
+    expect(response.status).toBe(401);
+    expect(
+      response.cookies.some((c) => c.startsWith("__Host-hotech_session=;")),
+    ).toBe(true);
   });
 });
 

@@ -184,3 +184,48 @@ export async function fetchAllUsers(
 export function currentCsrfToken(): string | null {
   return readCsrfCookie();
 }
+
+export interface DashboardAggregateBucket {
+  readonly date: string;
+  readonly submittedCounts: Readonly<Record<ApplicationStatus, number>>;
+  readonly statusChangeCounts: Readonly<Record<ApplicationStatus, number>>;
+}
+
+export interface DashboardAggregateResult {
+  readonly rangeStartDate: string;
+  readonly rangeEndDate: string;
+  readonly buckets: readonly DashboardAggregateBucket[];
+}
+
+function isDashboardAggregateResult(
+  value: unknown,
+): value is DashboardAggregateResult {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as Partial<DashboardAggregateResult>;
+  return (
+    typeof candidate.rangeStartDate === "string" &&
+    typeof candidate.rangeEndDate === "string" &&
+    Array.isArray(candidate.buckets)
+  );
+}
+
+/**
+ * Fetches the bounded (14-day), role-scoped dashboard aggregate that feeds
+ * the Agent multi-status trend chart and the Processor daily productivity
+ * chart. Role scoping happens entirely in Apps Script from the session; this
+ * client never supplies or trusts a client-side identity or date range. A
+ * malformed/unexpected response shape is treated as a fetch failure (never
+ * silently rendered), matching this client's other safe-parsing behavior.
+ */
+export async function fetchDashboardAggregate(): Promise<DashboardAggregateResult> {
+  const result = await request<{ aggregate: unknown }>(
+    "/api/applications/aggregate",
+    { method: "GET" },
+  );
+  if (!isDashboardAggregateResult(result.aggregate))
+    throw new DataApiError(
+      "INTERNAL_ERROR",
+      "The server returned an invalid response.",
+    );
+  return result.aggregate;
+}

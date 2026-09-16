@@ -40,6 +40,7 @@ import { appendActivityLog } from "./audit";
 import { validateTransition } from "./status-transitions";
 import { assertCurrentVersion, StaleVersionError } from "./versioning";
 import type { SpreadsheetSheet } from "./schema";
+import { buildDashboardAggregate } from "./dashboard-aggregate";
 
 export class CrudValidationError extends Error {
   constructor(message = "Request validation failed.") {
@@ -108,6 +109,10 @@ const OPERATION_CONTRACTS: Record<
   applications_assign: {
     method: "POST",
     path: "/internal/v1/crud/applications/assign",
+  },
+  applications_aggregate: {
+    method: "POST",
+    path: "/internal/v1/crud/applications/aggregate",
   },
 };
 
@@ -280,6 +285,9 @@ export function executeCrud(
     }
     if (operation === "applications_get") {
       return getApplication(actor, payload, deps);
+    }
+    if (operation === "applications_aggregate") {
+      return getApplicationsAggregate(actor, deps);
     }
 
     // Every mutation additionally requires CSRF double-submit.
@@ -624,6 +632,36 @@ function getApplication(
   // disclosing whether the row exists to an unauthorized caller.
   if (!mayReadApplication(actor, existing)) throw new CrudForbiddenError();
   return { data: stripApplicationRow(existing), nextCursor: null };
+}
+
+/**
+ * applications_aggregate — MVP-3 fix (D-047). Supplies both dashboard trend
+ * charts (Agent's multi-status trend, Processor's daily productivity chart)
+ * with a bounded, role-scoped, zero-filled daily aggregate instead of the
+ * illustrative fixtures those charts previously rendered. Role scope is
+ * derived only from the authoritative session actor, never a client claim:
+ * Admin gets the global aggregate; Agent gets only their own applications;
+ * Processor gets only applications assigned to them. No date range or actor
+ * identity is ever accepted from the client payload.
+ */
+function getApplicationsAggregate(
+  actor: Actor,
+  deps: CrudDependencies,
+): CrudResult {
+  const scope =
+    actor.role === "Admin"
+      ? ({ kind: "admin" } as const)
+      : actor.role === "Agent"
+        ? ({ kind: "agent", agentId: actor.userId } as const)
+        : ({ kind: "processor", processorId: actor.userId } as const);
+  const all = deps.applicationsRepository.list();
+  const result = buildDashboardAggregate(
+    scope,
+    all,
+    deps.statusHistorySheet,
+    deps.clock,
+  );
+  return { data: result, nextCursor: null };
 }
 
 function createApplication(

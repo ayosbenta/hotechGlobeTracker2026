@@ -1,4 +1,4 @@
-# Next Task — MVP-2/MVP-3 (MVP-2A-2F and MVP-3 implemented; MVP-4 not started)
+# Next Task — MVP-2/MVP-3 (MVP-2A-2F and MVP-3 implemented, MVP-3 trend-chart fix D-047 applied; MVP-4 not started)
 
 Roadmap reference: **`docs/MVP_COMPLETION_PLAN.md`** — Owner Approved (2026-09-15), along with
 decisions D-035/D-036.
@@ -887,8 +887,41 @@ CRLF-conversion warnings). Committed locally (not pushed) as
 `feat(mvp-3): connect approved dashboards to live data`.
 
 **Known limitations:** local/mocked only — no live Apps Script deployment, live Google/Upstash, or
-Vercel Preview was used; that remains MVP-4. Trend-chart time-series data remains illustrative for
-Agent/Processor (see above). No write/mutation UI (create/edit application forms, Processor
-transition actions, Admin assignment UI) was added — MVP-3 is read-only dashboard data per its
-scope; that interactive surface remains future work beyond the five-batch MVP roadmap's explicit
-scope.
+Vercel Preview was used; that remains MVP-4. No write/mutation UI (create/edit application forms,
+Processor transition actions, Admin assignment UI) was added — MVP-3 is read-only dashboard data
+per its scope; that interactive surface remains future work beyond the five-batch MVP roadmap's
+explicit scope.
+
+### MVP-3 fix (2026-09-16, D-047): live trend/productivity aggregates
+
+The trend-chart illustrative-fixture limitation noted above is now resolved. Added
+`applications_aggregate` to the `CrudOperation` union (`apps-script/core/contracts.ts`) and its
+allowlist entry in `crud-ingress.ts` — reusing the existing `POST /v1/internal/crud` route, no new
+entrypoint. `apps-script/core/dashboard-aggregate.ts` (new) builds a bounded, role-scoped,
+zero-filled 14-UTC-day aggregate (`DashboardAggregateResult`) from `ApplicationsRepository.list()`
+(already role-filtered upstream in `crud-domain.ts`'s new `getApplicationsAggregate` handler,
+mirroring `listApplications`'s scoping exactly: Admin sees all, Agent forced to their own
+`agentId`, Processor forced to their own `processorId`) and a direct read of the frozen
+`Status_History` sheet for status-change-per-day counts. UTC calendar-day bucketing was adopted as
+an explicit new decision (D-047) since no prior timezone convention existed anywhere in this
+codebase. No raw customer/contact field is ever included in the response.
+
+BFF: `GET /api/applications/aggregate` (`handleGetApplicationsAggregateRoute` in
+`server/crud/routes/applications.ts`, `api/applications/aggregate.ts`), mirroring the existing
+route pattern exactly (session-cookie auth, `applications-read` rate-limit bucket, unchanged
+`BffResponse<T>`/`BffErrorCode`). Frontend: `fetchDashboardAggregate()`
+(`src/data/applications-api.ts`) and `useDashboardData`'s new `trend`/`productivity` fields
+(`src/data/use-dashboard-data.ts`) feed `dashboard-page.tsx`'s Agent trend chart and Processor
+productivity chart directly, replacing the `agentTrend`/`processorProductivity` imports from
+`dashboard-mocks.ts` (both fixtures were deleted from that file — no other fixture or chart was
+touched). A failed aggregate fetch is supplementary and never blocks the rest of the dashboard;
+it renders an empty (never null/undefined) series instead.
+
+**Verification:** 156/156 Apps Script tests (+16), 423/423 total unit tests (+25), `format`/
+`format:check`/`lint`/`typecheck` clean, `gas:build`/`gas:check` passing (no new route), `build`
+scanned clean of secrets, 19/19 Playwright regressions (one new `/api/applications/aggregate`
+stub added to `e2e/dashboard-responsive.spec.ts`), a credential/secret grep over the diff and new
+files (clean), and `git diff --check` (clean, only benign CRLF-conversion warnings). `git diff
+--stat` confirmed only the expected 13 modified + 3 new files changed — no other dashboard visual/
+layout file was touched. No live external resource was used. Committed locally (not pushed) as
+`fix(mvp-3): replace dashboard trend fixtures with live aggregates`. See D-047.

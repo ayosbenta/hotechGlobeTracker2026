@@ -11,7 +11,8 @@ export type CrudOperation =
   | "applications_get"
   | "applications_create"
   | "applications_update"
-  | "applications_assign";
+  | "applications_assign"
+  | "applications_aggregate";
 
 const OPERATION_PATHS: Record<CrudOperation, { method: "POST"; path: string }> =
   {
@@ -39,6 +40,10 @@ const OPERATION_PATHS: Record<CrudOperation, { method: "POST"; path: string }> =
     applications_assign: {
       method: "POST",
       path: "/internal/v1/crud/applications/assign",
+    },
+    applications_aggregate: {
+      method: "POST",
+      path: "/internal/v1/crud/applications/aggregate",
     },
   };
 

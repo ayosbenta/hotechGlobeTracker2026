@@ -29,6 +29,7 @@ const ALLOWED_OPERATIONS: readonly CrudOperation[] = [
   "applications_create",
   "applications_update",
   "applications_assign",
+  "applications_aggregate",
 ];
 
 function isAllowedOperation(value: unknown): value is CrudOperation {

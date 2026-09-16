@@ -100,6 +100,7 @@ const OPERATION_PATHS: Record<CrudOperation, string> = {
   applications_create: "/internal/v1/crud/applications/create",
   applications_update: "/internal/v1/crud/applications/update",
   applications_assign: "/internal/v1/crud/applications/assign",
+  applications_aggregate: "/internal/v1/crud/applications/aggregate",
 };
 
 function envelope(
@@ -2092,6 +2093,221 @@ describe("MVP-2C/2D/2E CRUD domain — Applications", () => {
         deps,
       ),
     ).toThrow(CrudForbiddenError);
+  });
+});
+
+describe("MVP-3 fix (D-047) — applications_aggregate", () => {
+  function baseApplication(
+    overrides: Partial<{
+      applicationId: string;
+      agentId: string;
+      processorId: string;
+      currentStatus: string;
+      submittedAt: string;
+    }> = {},
+  ) {
+    return {
+      applicationId: overrides.applicationId ?? "a1",
+      customerFullName: "Customer",
+      mobileNumber: "09171111111",
+      email: "",
+      completeAddress: "Addr",
+      barangay: "Brgy",
+      cityMunicipality: "City",
+      province: "Province",
+      landmark: "",
+      planId: "plan-1",
+      planNameSnapshot: "Fiber 100",
+      monthlyPriceSnapshot: 1299,
+      agentId: overrides.agentId ?? "agent-1",
+      processorId: overrides.processorId ?? "",
+      currentStatus: overrides.currentStatus ?? "Pending",
+      jobOrderNumber: "",
+      submittedAt: overrides.submittedAt ?? clockNowIso(),
+      installedAt: "",
+      notes: "",
+      version: 1,
+      createdAt: clockNowIso(),
+      updatedAt: clockNowIso(),
+    };
+  }
+  function clockNowIso(): string {
+    return "2026-09-14T00:00:00.000Z";
+  }
+
+  it("Admin sees the global aggregate across all agents/processors", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create(
+      baseApplication({ applicationId: "a1", agentId: "agent-1" }) as never,
+    );
+    deps.applicationsRepository.create(
+      baseApplication({ applicationId: "a2", agentId: "agent-2" }) as never,
+    );
+    const admin = addUser(store, { role: "Admin" });
+    const { sessionToken } = addSession(store, admin);
+    const result = executeCrud(
+      "applications_aggregate",
+      envelope(
+        "applications_aggregate",
+        { session_token: sessionToken },
+        clock,
+      ),
+      deps,
+    );
+    const data = result.data as {
+      buckets: { submittedCounts: Record<string, number> }[];
+    };
+    const total = data.buckets.reduce(
+      (sum, bucket) =>
+        sum + Object.values(bucket.submittedCounts).reduce((a, b) => a + b, 0),
+      0,
+    );
+    expect(total).toBe(2);
+  });
+
+  it("Agent sees only their own applications' aggregate (no cross-agent leakage)", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create(
+      baseApplication({ applicationId: "a1", agentId: "agent-1" }) as never,
+    );
+    deps.applicationsRepository.create(
+      baseApplication({ applicationId: "a2", agentId: "agent-2" }) as never,
+    );
+    const agentA = addUser(store, { userId: "agent-1", role: "Agent" });
+    const { sessionToken } = addSession(store, agentA);
+    const result = executeCrud(
+      "applications_aggregate",
+      envelope(
+        "applications_aggregate",
+        { session_token: sessionToken },
+        clock,
+      ),
+      deps,
+    );
+    const data = result.data as {
+      buckets: { submittedCounts: Record<string, number> }[];
+    };
+    const total = data.buckets.reduce(
+      (sum, bucket) =>
+        sum + Object.values(bucket.submittedCounts).reduce((a, b) => a + b, 0),
+      0,
+    );
+    expect(total).toBe(1);
+  });
+
+  it("Processor sees only applications assigned to them (no cross-processor leakage)", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create(
+      baseApplication({
+        applicationId: "a1",
+        agentId: "agent-1",
+        processorId: "proc-1",
+      }) as never,
+    );
+    deps.applicationsRepository.create(
+      baseApplication({
+        applicationId: "a2",
+        agentId: "agent-1",
+        processorId: "proc-2",
+      }) as never,
+    );
+    const processor = addUser(store, { userId: "proc-1", role: "Processor" });
+    const { sessionToken } = addSession(store, processor);
+    const result = executeCrud(
+      "applications_aggregate",
+      envelope(
+        "applications_aggregate",
+        { session_token: sessionToken },
+        clock,
+      ),
+      deps,
+    );
+    const data = result.data as {
+      buckets: { submittedCounts: Record<string, number> }[];
+    };
+    const total = data.buckets.reduce(
+      (sum, bucket) =>
+        sum + Object.values(bucket.submittedCounts).reduce((a, b) => a + b, 0),
+      0,
+    );
+    expect(total).toBe(1);
+  });
+
+  it("zero matching applications returns a valid zero-filled series, never an error", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    const agent = addUser(store, { userId: "agent-empty", role: "Agent" });
+    const { sessionToken } = addSession(store, agent);
+    const result = executeCrud(
+      "applications_aggregate",
+      envelope(
+        "applications_aggregate",
+        { session_token: sessionToken },
+        clock,
+      ),
+      deps,
+    );
+    const data = result.data as {
+      buckets: {
+        submittedCounts: Record<string, number>;
+        statusChangeCounts: Record<string, number>;
+      }[];
+    };
+    expect(data.buckets.length).toBeGreaterThan(0);
+    for (const bucket of data.buckets) {
+      for (const value of Object.values(bucket.submittedCounts)) {
+        expect(value).toBe(0);
+      }
+      for (const value of Object.values(bucket.statusChangeCounts)) {
+        expect(value).toBe(0);
+      }
+    }
+  });
+
+  it("never includes raw customer/contact fields in the aggregate response", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    seedPlanRow(deps);
+    deps.applicationsRepository.create(baseApplication() as never);
+    const admin = addUser(store, { role: "Admin" });
+    const { sessionToken } = addSession(store, admin);
+    const result = executeCrud(
+      "applications_aggregate",
+      envelope(
+        "applications_aggregate",
+        { session_token: sessionToken },
+        clock,
+      ),
+      deps,
+    );
+    const serialized = JSON.stringify(result.data);
+    expect(serialized).not.toContain("Customer");
+    expect(serialized).not.toContain("09171111111");
+    expect(serialized).not.toContain("Addr");
+  });
+
+  it("requires a valid session (no session_token is denied)", () => {
+    const store = new Store();
+    const clock = new Clock();
+    const deps = buildDeps(store, clock);
+    expect(() =>
+      executeCrud(
+        "applications_aggregate",
+        envelope("applications_aggregate", {}, clock),
+        deps,
+      ),
+    ).toThrow(AuthDenied);
   });
 });
 

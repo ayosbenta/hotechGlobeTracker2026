@@ -156,56 +156,11 @@ export const agentStatus: readonly StatusBreakdown[] = [
   { label: "Cancelled", value: 1, tone: "red" },
 ];
 
-export const agentTrend: readonly TrendPoint[] = [
-  {
-    label: "Jan",
-    applications: 4,
-    pending: 1,
-    ongoing: 3,
-    installed: 4,
-    cancelled: 0,
-  },
-  {
-    label: "Feb",
-    applications: 7,
-    pending: 2,
-    ongoing: 5,
-    installed: 7,
-    cancelled: 0,
-  },
-  {
-    label: "Mar",
-    applications: 9,
-    pending: 3,
-    ongoing: 7,
-    installed: 9,
-    cancelled: 1,
-  },
-  {
-    label: "Apr",
-    applications: 11,
-    pending: 4,
-    ongoing: 7,
-    installed: 11,
-    cancelled: 2,
-  },
-  {
-    label: "May",
-    applications: 14,
-    pending: 9,
-    ongoing: 12,
-    installed: 16,
-    cancelled: 2,
-  },
-  {
-    label: "Jun",
-    applications: 18,
-    pending: 12,
-    ongoing: 15,
-    installed: 18,
-    cancelled: 2,
-  },
-];
+// agentTrend and processorProductivity fixtures were removed (D-047): both
+// dashboard charts they fed are now backed by the live
+// GET /api/applications/aggregate endpoint via useDashboardData(). Test
+// fixtures for those charts now live only inside test files (e.g.
+// use-dashboard-data.test.ts), never here.
 
 export const agentSubmissions = [
   {
@@ -367,14 +322,4 @@ export const processorQueue = [
     date: "Apr 23, 2025",
     time: "05:33 PM",
   },
-] as const;
-
-export const processorProductivity = [
-  { label: "Mon", applications: 11 },
-  { label: "Tue", applications: 15 },
-  { label: "Wed", applications: 20 },
-  { label: "Thu", applications: 26 },
-  { label: "Fri", applications: 26 },
-  { label: "Sat", applications: 32 },
-  { label: "Sun", applications: 25 },
 ] as const;

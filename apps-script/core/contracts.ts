@@ -97,7 +97,8 @@ export type CrudOperation =
   | "applications_get"
   | "applications_create"
   | "applications_update"
-  | "applications_assign";
+  | "applications_assign"
+  | "applications_aggregate";
 
 export type PlanStatus = "Active" | "Inactive";
 
@@ -168,4 +169,38 @@ export interface ApplicationRecord {
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * MVP-3 fix (D-047): one bounded, role-scoped day bucket for the dashboard
+ * trend/productivity aggregate. `date` is a UTC calendar-day key
+ * (`YYYY-MM-DD`, see D-047's timezone decision — this Sheets/Apps Script
+ * backend has no established timezone convention, so UTC calendar days are
+ * the deterministic default). `submittedCounts` is keyed by
+ * `ApplicationStatus` (submission-day status snapshot, used by the Agent
+ * trend chart); `statusChangeCounts` is keyed by `ApplicationStatus` too but
+ * counts `Status_History` rows whose `to_status` landed on that day (used by
+ * the Processor productivity chart, e.g. Installed-per-day). Both maps are
+ * always present with every `ApplicationStatus` key, zero-filled — never a
+ * sparse/partial object — so a zero-application day still round-trips a
+ * valid shape to the frozen chart components.
+ */
+export interface DashboardAggregateBucket {
+  date: string;
+  submittedCounts: Record<ApplicationStatus, number>;
+  statusChangeCounts: Record<ApplicationStatus, number>;
+}
+
+/**
+ * No raw customer/contact data is ever included — only counts bucketed by
+ * UTC calendar day, scoped server-side to the caller's role (D-047):
+ * Admin sees the global aggregate; Agent sees only their own applications;
+ * Processor sees only applications assigned to them. `rangeStartDate`/
+ * `rangeEndDate` echo the fixed, bounded (14-day) UTC calendar-day range the
+ * server actually used, never a client-supplied arbitrary range.
+ */
+export interface DashboardAggregateResult {
+  rangeStartDate: string;
+  rangeEndDate: string;
+  buckets: readonly DashboardAggregateBucket[];
 }

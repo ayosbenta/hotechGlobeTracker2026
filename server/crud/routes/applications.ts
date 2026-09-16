@@ -187,6 +187,45 @@ export async function handleGetApplicationRoute(
   }
 }
 
+/**
+ * GET /api/applications/aggregate — Admin, Agent, Processor. Role scope
+ * (global for Admin, own-only for Agent, assigned-only for Processor) is
+ * enforced entirely in Apps Script from the session-derived actor; this
+ * route only forwards the session token, never a client-supplied identity
+ * or date range.
+ */
+export async function handleGetApplicationsAggregateRoute(
+  request: RouteRequest,
+  deps: RouteDependencies,
+): Promise<RouteResponse> {
+  const requestId = deps.requestId.generate();
+  try {
+    if (request.method !== "GET") throw new BffError("NOT_FOUND");
+    const sessionToken = requireSessionToken(request);
+
+    const rateKey = privacyKeyFor(deps, sessionToken);
+    try {
+      const limit = await deps.rateLimiter.check("applications-read", rateKey);
+      if (!limit.allowed) throw new BffError("RATE_LIMITED");
+    } catch (error) {
+      if (error instanceof BffError) throw error;
+      // A rate-limiter outage never blocks a read.
+    }
+
+    const result = await deps.appsScriptCrud.execute("applications_aggregate", {
+      session_token: sessionToken,
+    });
+
+    return jsonSuccess(requestId, { aggregate: result.data });
+  } catch (error) {
+    return jsonFailure(
+      requestId,
+      mapCrudError(error),
+      maybeClearSession(error),
+    );
+  }
+}
+
 /** POST /api/applications — Admin, Agent. */
 export async function handleCreateApplicationRoute(
   request: RouteRequest,

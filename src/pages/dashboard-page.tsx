@@ -30,7 +30,6 @@ import {
   TableAction,
 } from "@/components/dashboard/dashboard-ui";
 import { Button } from "@/components/ui/button";
-import { agentTrend, processorProductivity } from "@/data/dashboard-mocks";
 import {
   useDashboardData,
   type DashboardApplicationRow,
@@ -300,12 +299,10 @@ function AgentDashboard({ data }: { readonly data: DashboardDataResult }) {
             eyebrow="Track the status of your submissions"
             title="My Applications"
           />
-          {/* Historical multi-status trend requires server-side time-series
-              aggregation not yet exposed by the API; kept on illustrative
-              fixture data until that endpoint exists (documented MVP-3
-              limitation, not a mocked production data path). */}
+          {/* Live multi-status trend from GET /api/applications/aggregate
+              (D-047), replacing the previous illustrative fixture. */}
           <TrendChart
-            data={agentTrend}
+            data={data.trend}
             lines={[
               { dataKey: "pending", color: dashboardColors.amber },
               { dataKey: "ongoing", color: dashboardColors.blue },
@@ -544,13 +541,13 @@ function ProcessorDashboard({ data }: { readonly data: DashboardDataResult }) {
                 </p>
               </div>
             </div>
-            {/* Daily productivity time-series requires server-side
-                aggregation not yet exposed by the API; kept on illustrative
-                fixture data until that endpoint exists. */}
+            {/* Live daily productivity from
+                GET /api/applications/aggregate (D-047), replacing the
+                previous illustrative fixture. */}
             <div className="h-[220px] px-2">
               <ResponsiveContainer height="100%" width="100%">
                 <BarChart
-                  data={processorProductivity}
+                  data={data.productivity}
                   margin={{ top: 18, right: 8, left: -22, bottom: 0 }}
                 >
                   <CartesianGrid stroke="#e4edf8" vertical={false} />

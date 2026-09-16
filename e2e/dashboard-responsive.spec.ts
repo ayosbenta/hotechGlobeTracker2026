@@ -101,6 +101,24 @@ async function mockDashboardData(page: Page): Promise<void> {
       }),
     }),
   );
+  await page.route("**/api/applications/aggregate", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        requestId: "e2e-request",
+        data: {
+          aggregate: {
+            rangeStartDate: "2025-04-09",
+            rangeEndDate: "2025-04-22",
+            buckets: [],
+          },
+        },
+        meta: { timestamp: new Date().toISOString(), nextCursor: null },
+      }),
+    }),
+  );
   await page.route("**/api/plans", (route) =>
     route.fulfill({
       status: 200,

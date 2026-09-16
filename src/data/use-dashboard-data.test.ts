@@ -91,22 +91,28 @@ describe("useDashboardData", () => {
   });
 
   it("paginates through nextCursor to fetch every page", async () => {
-    let call = 0;
-    const fetchMock = vi.fn().mockImplementation(async () => {
-      call += 1;
-      return call === 1
-        ? jsonResponse(applicationsBody([SAMPLE_APP], "25"))
-        : jsonResponse(
-            applicationsBody([{ ...SAMPLE_APP, applicationId: "a2" }], null),
-          );
-    });
+    // "agent" role never fetches /api/users; /api/applications/aggregate is
+    // routed separately (and fails safely) so it never affects the
+    // applications page-count assertion below.
+    let applicationsCall = 0;
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/applications/aggregate"))
+          throw new Error("aggregate unavailable");
+        applicationsCall += 1;
+        return applicationsCall === 1
+          ? jsonResponse(applicationsBody([SAMPLE_APP], "25"))
+          : jsonResponse(
+              applicationsBody([{ ...SAMPLE_APP, applicationId: "a2" }], null),
+            );
+      });
     global.fetch = fetchMock;
 
-    // "agent" role never fetches /api/users, so every call here is an
-    // /api/applications page fetch.
     const { result } = renderHook(() => useDashboardData("agent"));
     await waitFor(() => expect(result.current.state).toBe("populated"));
-    expect(call).toBe(2);
+    expect(applicationsCall).toBe(2);
     expect(new Set(result.current.rows.map((r) => r.applicationId))).toEqual(
       new Set(["a1", "a2"]),
     );
@@ -160,5 +166,98 @@ describe("useDashboardData", () => {
     await waitFor(() => expect(result.current.state).toBe("populated"));
     expect(result.current.agentCount).toBeUndefined();
     expect(result.current.processorCount).toBeUndefined();
+  });
+
+  it("derives trend/productivity chart series from the live aggregate endpoint", async () => {
+    global.fetch = vi
+      .fn()
+      .mockImplementation(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/applications/aggregate"))
+          return jsonResponse({
+            ok: true,
+            requestId: "r1",
+            data: {
+              aggregate: {
+                rangeStartDate: "2026-01-01",
+                rangeEndDate: "2026-01-02",
+                buckets: [
+                  {
+                    date: "2026-01-01",
+                    submittedCounts: {
+                      Pending: 1,
+                      Transmitted: 0,
+                      "With Job Order": 0,
+                      Ongoing: 0,
+                      Installed: 2,
+                      Delayed: 0,
+                      "Cancelled/Rejected": 0,
+                    },
+                    statusChangeCounts: {
+                      Pending: 0,
+                      Transmitted: 0,
+                      "With Job Order": 0,
+                      Ongoing: 0,
+                      Installed: 3,
+                      Delayed: 0,
+                      "Cancelled/Rejected": 0,
+                    },
+                  },
+                  {
+                    date: "2026-01-02",
+                    submittedCounts: {
+                      Pending: 0,
+                      Transmitted: 0,
+                      "With Job Order": 0,
+                      Ongoing: 0,
+                      Installed: 0,
+                      Delayed: 0,
+                      "Cancelled/Rejected": 0,
+                    },
+                    statusChangeCounts: {
+                      Pending: 0,
+                      Transmitted: 0,
+                      "With Job Order": 0,
+                      Ongoing: 0,
+                      Installed: 0,
+                      Delayed: 0,
+                      "Cancelled/Rejected": 0,
+                    },
+                  },
+                ],
+              },
+            },
+            meta: { timestamp: "2026-01-01T00:00:00.000Z", nextCursor: null },
+          });
+        return jsonResponse(applicationsBody([SAMPLE_APP]));
+      });
+
+    const { result } = renderHook(() => useDashboardData("agent"));
+    await waitFor(() => expect(result.current.state).toBe("populated"));
+    expect(result.current.trend).toHaveLength(2);
+    expect(result.current.trend[0]).toMatchObject({
+      applications: 3,
+      pending: 1,
+      installed: 2,
+    });
+    expect(result.current.productivity).toHaveLength(2);
+    expect(result.current.productivity[0]).toMatchObject({ applications: 3 });
+    expect(result.current.productivity[1]).toMatchObject({ applications: 0 });
+  });
+
+  it("renders an empty trend/productivity series (not an error) when the aggregate fetch fails", async () => {
+    global.fetch = vi
+      .fn()
+      .mockImplementation(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/applications/aggregate"))
+          throw new Error("aggregate unavailable");
+        return jsonResponse(applicationsBody([SAMPLE_APP]));
+      });
+
+    const { result } = renderHook(() => useDashboardData("processor"));
+    await waitFor(() => expect(result.current.state).toBe("populated"));
+    expect(result.current.trend).toEqual([]);
+    expect(result.current.productivity).toEqual([]);
   });
 });
