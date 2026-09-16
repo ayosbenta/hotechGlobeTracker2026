@@ -129,6 +129,7 @@ function envelope(
   const crypto = appsScriptCrypto(runtime.cryptoUtilities);
   const routes: Record<Operation, string> = {
     login_first_bind: "/internal/v1/auth/login-first-bind",
+    login_password: "/internal/v1/auth/login-password",
     validate_session: "/internal/v1/auth/session/validate",
     rotate_session: "/internal/v1/auth/session/rotate",
     issue_csrf: "/internal/v1/auth/csrf/issue",

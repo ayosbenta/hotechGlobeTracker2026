@@ -5,6 +5,11 @@ import {
   SESSIONS_HEADERS,
   USERS_AUTH_COLUMNS,
 } from "./auth-schema";
+import {
+  lockoutUntilFor,
+  type CredentialRow,
+  type PasswordCredentialStore,
+} from "./password-auth";
 
 function cells(sheet: {
   getLastRow(): number;
@@ -36,8 +41,13 @@ function nullable(value: unknown): string | null {
 function number(value: unknown): number {
   return typeof value === "number" ? value : Number(value);
 }
+function bool(value: unknown): boolean {
+  return typeof value === "boolean"
+    ? value
+    : String(value).trim().toUpperCase() === "TRUE";
+}
 /** Header-addressed persistence adapter; no raw authentication material is ever written. */
-export class SheetAuthStore implements AuthStore {
+export class SheetAuthStore implements AuthStore, PasswordCredentialStore {
   constructor(private readonly spreadsheet: Spreadsheet) {}
   private sheet(name: string) {
     const sheet = this.spreadsheet.getSheetByName(name);
@@ -123,6 +133,78 @@ export class SheetAuthStore implements AuthStore {
       this.sheet("Users")
         .getRange(user.row, 10, 1, 1)
         .setValues([[changes.providerSubject]]);
+  }
+  /**
+   * Credentials tab (auth-schema-v2.ts), 1-indexed columns:
+   * 1 credential_id, 2 user_id, 3 login_identifier_normalized, 4 password_hash,
+   * 5 password_algo, 6 password_algo_params, 7 must_change_password,
+   * 8 password_changed_at, 9 failed_login_count, 10 locked_until,
+   * 11 created_at, 12 updated_at.
+   */
+  private credentials(): CredentialRow[] {
+    return cells(this.sheet("Credentials")).map((row, index) => ({
+      credentialId: String(row[0]),
+      userId: String(row[1]),
+      loginIdentifierNormalized: String(row[2]),
+      passwordHash: String(row[3]),
+      passwordAlgo: String(row[4]),
+      passwordAlgoParams: String(row[5] ?? ""),
+      mustChangePassword: bool(row[6]),
+      passwordChangedAt: nullable(row[7]),
+      failedLoginCount: number(row[8] ?? 0),
+      lockedUntil: nullable(row[9]),
+      row: index + 2,
+    }));
+  }
+  private credentialById(credentialId: string): CredentialRow | null {
+    return (
+      this.credentials().find((item) => item.credentialId === credentialId) ??
+      null
+    );
+  }
+  private setCredentialCell(row: number, column: number, value: unknown): void {
+    this.sheet("Credentials")
+      .getRange(row, column, 1, 1)
+      .setValues([[value]]);
+    // updated_at, kept in step with every credential mutation.
+    this.sheet("Credentials")
+      .getRange(row, 12, 1, 1)
+      .setValues([[new Date().toISOString()]]);
+  }
+  getCredentialByIdentifier(identifier: string): CredentialRow | null {
+    return (
+      this.credentials().find(
+        (item) => item.loginIdentifierNormalized === identifier,
+      ) ?? null
+    );
+  }
+  getUserById(userId: string): AuthUser | null {
+    return this.users().find((item) => item.userId === userId) ?? null;
+  }
+  /**
+   * Increments the consecutive-failure counter and applies the persistent
+   * lockout once the policy threshold is crossed (PASSWORD_AUTH_IMPACT_PLAN.md
+   * §8). The threshold itself lives in password-auth.ts; this adapter applies
+   * it rather than defining its own.
+   */
+  recordFailedAuthAttempt(credentialId: string): void {
+    const credential = this.credentialById(credentialId);
+    if (credential === null) return;
+    const failed = credential.failedLoginCount + 1;
+    this.setCredentialCell(credential.row, 9, failed);
+    const lockedUntil = lockoutUntilFor(failed, new Date());
+    if (lockedUntil !== null)
+      this.setCredentialCell(credential.row, 10, lockedUntil);
+  }
+  clearFailedAuthAttempts(credentialId: string): void {
+    const credential = this.credentialById(credentialId);
+    if (credential === null) return;
+    this.setCredentialCell(credential.row, 9, 0);
+  }
+  clearLockout(credentialId: string): void {
+    const credential = this.credentialById(credentialId);
+    if (credential === null) return;
+    this.setCredentialCell(credential.row, 10, "");
   }
   appendSession(value: Omit<StoredSession, "row">): void {
     this.sheet("Sessions").appendRow([

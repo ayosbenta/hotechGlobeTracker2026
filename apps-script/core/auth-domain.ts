@@ -13,6 +13,10 @@ import {
   type PreprovisionedUser,
 } from "./first-bind";
 import {
+  PasswordAuthDomain,
+  type PasswordCredentialStore,
+} from "./password-auth";
+import {
   createSessionRecord,
   touchSession,
   validateSession,
@@ -22,6 +26,7 @@ import {
 
 export type Operation =
   | "login_first_bind"
+  | "login_password"
   | "validate_session"
   | "rotate_session"
   | "issue_csrf"
@@ -34,6 +39,11 @@ const OPERATIONS: Record<
   login_first_bind: {
     method: "POST",
     path: "/internal/v1/auth/login-first-bind",
+    replay: true,
+  },
+  login_password: {
+    method: "POST",
+    path: "/internal/v1/auth/login-password",
     replay: true,
   },
   validate_session: {
@@ -106,6 +116,11 @@ export interface AuthDomainDependencies {
   ids: UuidGenerator;
   store: AuthStore;
   lock: Lock;
+  /**
+   * Credential-side store for the password path (D-050 batch 2). Optional so
+   * the Google path, and every existing caller and test fake, is unaffected.
+   */
+  passwordStore?: PasswordCredentialStore;
 }
 export class AuthDenied extends Error {
   constructor() {
@@ -271,7 +286,12 @@ export function executeInternalAuth(
   operation: Operation,
   raw: unknown,
   deps: AuthDomainDependencies,
-): { userId?: string; role?: string; sessionId?: string } {
+): {
+  userId?: string;
+  role?: string;
+  sessionId?: string;
+  mustChangePassword?: boolean;
+} {
   const contract = OPERATIONS[operation];
   const verified = verifyEnvelope(
     raw,
@@ -333,6 +353,68 @@ export function executeInternalAuth(
         userId: user.userId,
         role: user.role,
         sessionId: created.sessionId,
+      };
+    }
+    if (operation === "login_password") {
+      const passwordStore = deps.passwordStore;
+      if (passwordStore === undefined) throw new AuthDenied();
+      const outcome = new PasswordAuthDomain(passwordStore).decidePasswordLogin(
+        {
+          lockHeld: true,
+          identifier: text(payload.login_identifier),
+          // The BFF owns the hash comparison (it has the only crypto primitive);
+          // the signed envelope, not this flag, is what authenticates the caller,
+          // exactly as email_verified is trusted on the Google path.
+          passwordVerified: payload.password_verified === true,
+          now: deps.clock.now(),
+          isSupportedRole: supportedRole,
+        },
+      );
+      if (
+        outcome.decision !== "allow" &&
+        outcome.decision !== "must_change_password"
+      )
+        throw new AuthDenied();
+      const resolved = outcome.user;
+      if (resolved === null) throw new AuthDenied();
+      const user = deps.store
+        .users()
+        .find((item) => item.userId === resolved.userId);
+      if (user === undefined || !supportedRole(user.role))
+        throw new AuthDenied();
+      audit(
+        deps,
+        user.userId,
+        "AUTH_LOGIN_INTENT",
+        user.userId,
+        auditRequestId,
+        "intent",
+      );
+      // A successful login replaces any surviving prior session, matching the
+      // Google path exactly.
+      for (const prior of deps.store.sessions()) {
+        if (prior.userId === user.userId && prior.revokedAt === null)
+          deps.store.updateSession(prior, revokeSession(prior, deps.clock));
+      }
+      const created = create(
+        deps,
+        user,
+        token(payload.session_token),
+        token(payload.csrf_token),
+      );
+      audit(
+        deps,
+        user.userId,
+        "AUTH_LOGIN_COMPLETE",
+        created.sessionId,
+        auditRequestId,
+        "complete",
+      );
+      return {
+        userId: user.userId,
+        role: user.role,
+        sessionId: created.sessionId,
+        mustChangePassword: outcome.decision === "must_change_password",
       };
     }
     const current = validSession(deps, token(payload.session_token));

@@ -139,15 +139,19 @@ export function executeInternalAuthPhase03B(
   const config = loadAuthConfig(
     runtime.PropertiesService.getScriptProperties(),
   );
+  const store = new SheetAuthStore(
+    runtime.SpreadsheetApp.openById(config.spreadsheetId),
+  );
   return withScriptLock(runtime.LockService, () =>
     executeInternalAuth(operation, envelope, {
       config,
       crypto: appsScriptCrypto(runtime.Utilities),
       clock: systemClock,
       ids: createAppsScriptUuidGenerator(runtime.Utilities),
-      store: new SheetAuthStore(
-        runtime.SpreadsheetApp.openById(config.spreadsheetId),
-      ),
+      store,
+      // Same adapter: SheetAuthStore implements both AuthStore and
+      // PasswordCredentialStore (D-050 batch 2).
+      passwordStore: store,
       lock: { run: (work) => work() },
     }),
   );
