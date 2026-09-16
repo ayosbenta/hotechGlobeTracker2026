@@ -128,7 +128,7 @@ describe("App routes", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Sign in with your Google account to continue."),
+        screen.getByText("Sign in with your username and password to continue."),
       ).toBeInTheDocument();
     });
   });

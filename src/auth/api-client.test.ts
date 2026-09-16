@@ -4,9 +4,8 @@ import {
   AuthApiError,
   fetchCsrfToken,
   fetchCurrentSession,
-  fetchLoginNonce,
   logout,
-  submitGoogleCredential,
+  submitPasswordLogin,
 } from "./api-client";
 
 function jsonResponse(status: number, body: unknown) {
@@ -47,28 +46,7 @@ describe("auth api-client", () => {
     vi.restoreAllMocks();
   });
 
-  it("fetchLoginNonce posts to /api/auth/nonce and returns the nonce data", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse(200, {
-        ok: true,
-        requestId: "r1",
-        data: { nonce: "n1", expiresAt: "2026-01-01T00:05:00.000Z" },
-      }),
-    );
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    const result = await fetchLoginNonce();
-    expect(result).toEqual({
-      nonce: "n1",
-      expiresAt: "2026-01-01T00:05:00.000Z",
-    });
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/auth/nonce",
-      expect.objectContaining({ method: "POST", credentials: "same-origin" }),
-    );
-  });
-
-  it("submitGoogleCredential posts the credential and maps a recognized role", async () => {
+  it("submitPasswordLogin posts the username and password and maps a recognized role", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse(200, {
         ok: true,
@@ -81,14 +59,16 @@ describe("auth api-client", () => {
     );
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await submitGoogleCredential("credential-value");
+    const result = await submitPasswordLogin("ryanzkey", "secret-value");
     expect(result.user.role).toBe("agent");
     expect(result.redirectTo).toBe("/agent/dashboard");
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(init.body).toBe(JSON.stringify({ credential: "credential-value" }));
+    expect(init.body).toBe(
+      JSON.stringify({ username: "ryanzkey", password: "secret-value" }),
+    );
   });
 
-  it("submitGoogleCredential throws FORBIDDEN for an unrecognized role rather than guessing", async () => {
+  it("submitPasswordLogin throws FORBIDDEN for an unrecognized role rather than guessing", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       jsonResponse(200, {
         ok: true,
@@ -97,7 +77,7 @@ describe("auth api-client", () => {
       }),
     ) as unknown as typeof fetch;
 
-    await expect(submitGoogleCredential("c")).rejects.toMatchObject({
+    await expect(submitPasswordLogin("u", "p")).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
   });

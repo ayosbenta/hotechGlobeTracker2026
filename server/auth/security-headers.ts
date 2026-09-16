@@ -4,18 +4,17 @@ export interface SecurityHeaderOptions {
 
 /**
  * Approved browser-facing security headers for BFF auth responses.
- * CSP is intentionally restrictive; GIS script/frame/connect/style origins
- * are the only third-party allowances, per the Phase 03C plan.
+ * CSP is intentionally restrictive and allows no third-party origins.
  */
 export function authSecurityHeaders(
   options: SecurityHeaderOptions,
 ): Record<string, string> {
   const csp = [
     "default-src 'self'",
-    "script-src 'self' https://accounts.google.com",
-    "style-src 'self' https://accounts.google.com",
-    "frame-src https://accounts.google.com",
-    "connect-src 'self' https://accounts.google.com",
+    "script-src 'self'",
+    "style-src 'self'",
+    "frame-src 'none'",
+    "connect-src 'self'",
     "frame-ancestors 'none'",
     "object-src 'none'",
     "base-uri 'none'",

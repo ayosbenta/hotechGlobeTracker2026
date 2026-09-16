@@ -2,10 +2,8 @@ import { Ratelimit } from "@upstash/ratelimit";
 import type { Redis } from "@upstash/redis";
 
 export type RateLimitBucket =
-  | "nonce-minute"
-  | "nonce-hour"
   | "login-ip"
-  | "login-sub"
+  | "login-user"
   | "me"
   | "csrf"
   | "logout"
@@ -33,33 +31,21 @@ export interface RateLimiter {
 
 /**
  * All privacy keys must already be HMAC-derived by the caller
- * (see privacyKey()) before reaching this adapter; raw IP, email, sub, or
+ * (see privacyKey()) before reaching this adapter; raw IP, username, email, or
  * session tokens must never be used as a Redis key.
  */
 export function createUpstashRateLimiter(redis: Redis): RateLimiter {
   const limiters: Record<RateLimitBucket, Ratelimit> = {
-    "nonce-minute": new Ratelimit({
-      redis,
-      analytics: false,
-      prefix: "hotech:rl:nonce-minute",
-      limiter: Ratelimit.slidingWindow(10, "1 m"),
-    }),
-    "nonce-hour": new Ratelimit({
-      redis,
-      analytics: false,
-      prefix: "hotech:rl:nonce-hour",
-      limiter: Ratelimit.slidingWindow(50, "1 h"),
-    }),
     "login-ip": new Ratelimit({
       redis,
       analytics: false,
       prefix: "hotech:rl:login-ip",
       limiter: Ratelimit.slidingWindow(5, "10 m"),
     }),
-    "login-sub": new Ratelimit({
+    "login-user": new Ratelimit({
       redis,
       analytics: false,
-      prefix: "hotech:rl:login-sub",
+      prefix: "hotech:rl:login-user",
       limiter: Ratelimit.slidingWindow(10, "1 h"),
     }),
     me: new Ratelimit({

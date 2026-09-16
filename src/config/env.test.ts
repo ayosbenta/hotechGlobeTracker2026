@@ -22,41 +22,18 @@ describe("environment", () => {
     expect(environment.appName).toBe("Hotech Globe Tracker");
   });
 
-  it("leaves googleClientId undefined when VITE_GOOGLE_CLIENT_ID is not set", () => {
-    expect(environment.googleClientId).toBeUndefined();
-  });
-
-  it("treats a defined-but-empty VITE_GOOGLE_CLIENT_ID as not set", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const env = await importEnvironmentWith("VITE_GOOGLE_CLIENT_ID", "");
-
-    expect(env.googleClientId).toBeUndefined();
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
-  it("treats a whitespace-only VITE_GOOGLE_CLIENT_ID as not set", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const env = await importEnvironmentWith("VITE_GOOGLE_CLIENT_ID", "   ");
-
-    expect(env.googleClientId).toBeUndefined();
-    warn.mockRestore();
-  });
-
   it("falls back to the default app name when VITE_APP_NAME is empty", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const env = await importEnvironmentWith("VITE_APP_NAME", "");
 
     expect(env.appName).toBe("Hotech Globe Tracker");
+    expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it("trims and keeps a real VITE_GOOGLE_CLIENT_ID", async () => {
-    const env = await importEnvironmentWith(
-      "VITE_GOOGLE_CLIENT_ID",
-      "  123.apps.googleusercontent.com  ",
-    );
+  it("trims and keeps a real VITE_APP_NAME", async () => {
+    const env = await importEnvironmentWith("VITE_APP_NAME", "  Hotech  ");
 
-    expect(env.googleClientId).toBe("123.apps.googleusercontent.com");
+    expect(env.appName).toBe("Hotech");
   });
 });

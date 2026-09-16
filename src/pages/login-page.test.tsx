@@ -1,17 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AuthProvider } from "@/auth/auth-context";
-import * as googleIdentityServices from "@/auth/google-identity-services";
-import type { GoogleAccountsId } from "@/auth/google-identity-services";
-
-vi.mock("@/config/env", () => ({
-  environment: {
-    appName: "Hotech Globe Tracker",
-    googleClientId: "test-client-id",
-  },
-}));
 
 import { LoginPage } from "./login-page";
 
@@ -19,7 +10,7 @@ function jsonResponse(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
 }
 
-function failureMe(code: string) {
+function failure(code: string) {
   return jsonResponse({
     ok: false,
     requestId: "r1",
@@ -27,15 +18,7 @@ function failureMe(code: string) {
   });
 }
 
-function successNonce(nonce = "test-nonce") {
-  return jsonResponse({
-    ok: true,
-    requestId: "r1",
-    data: { nonce, expiresAt: "2026-01-01T00:05:00.000Z" },
-  });
-}
-
-function successLogin(role = "Agent") {
+function successLogin(role = "Admin") {
   return jsonResponse({
     ok: true,
     requestId: "r1",
@@ -46,7 +29,7 @@ function successLogin(role = "Agent") {
   });
 }
 
-function successMe(role = "Agent") {
+function successMe(role = "Admin") {
   return jsonResponse({
     ok: true,
     requestId: "r1",
@@ -61,32 +44,31 @@ function successMe(role = "Agent") {
   });
 }
 
-/** A fake accounts.id whose `initialize` captures the callback for tests to invoke directly. */
-function fakeAccountsId(): {
-  accountsId: GoogleAccountsId;
-  fireCredential: (credential: string) => void;
-  initializedWith: () => { client_id: string; nonce: string } | undefined;
-} {
-  let captured:
-    | {
-        client_id: string;
-        nonce: string;
-        callback: (r: { credential: string }) => void;
-      }
-    | undefined;
-  const accountsId: GoogleAccountsId = {
-    initialize: (config) => {
-      captured = config as typeof captured;
-    },
-    renderButton: () => undefined,
-    prompt: () => undefined,
-  };
-  return {
-    accountsId,
-    fireCredential: (credential) => captured?.callback({ credential }),
-    initializedWith: () =>
-      captured && { client_id: captured.client_id, nonce: captured.nonce },
-  };
+function renderLogin() {
+  render(
+    <MemoryRouter initialEntries={["/login"]}>
+      <AuthProvider>
+        <Routes>
+          <Route element={<LoginPage />} path="/login" />
+          <Route element={<p>Admin dashboard</p>} path="/admin/dashboard" />
+        </Routes>
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+}
+
+function fillAndSubmit(username: string, password: string) {
+  fireEvent.change(screen.getByLabelText("Username"), {
+    target: { value: username },
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: password },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+}
+
+function loginCalls(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls.filter(([url]) => url === "/api/auth/login");
 }
 
 describe("LoginPage", () => {
@@ -95,258 +77,162 @@ describe("LoginPage", () => {
   afterEach(() => {
     global.fetch = originalFetch;
     vi.restoreAllMocks();
-    document.head.querySelectorAll("script").forEach((node) => node.remove());
   });
 
-  it("renders the sign-in heading and never renders a password or OTP input", async () => {
+  it("renders a username/password form and no Google sign-in", async () => {
     global.fetch = vi
       .fn()
-      .mockResolvedValue(failureMe("AUTH_REQUIRED")) as unknown as typeof fetch;
-    vi.spyOn(
-      googleIdentityServices,
-      "loadGoogleIdentityServices",
-    ).mockRejectedValue(new Error("gis unavailable in test"));
+      .mockResolvedValue(failure("AUTH_REQUIRED")) as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter initialEntries={["/login"]}>
-        <AuthProvider>
-          <LoginPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(
-        screen.getByText("Sign in with your Google account to continue."),
-      ).toBeInTheDocument();
-    });
-    expect(document.querySelector('input[type="password"]')).toBeNull();
-    expect(
-      screen.queryByLabelText(/otp|one-time|verification code/i),
-    ).toBeNull();
-  });
-
-  it("shows the account-inactive message when the session state carries that error", async () => {
-    global.fetch = vi
-      .fn()
-      .mockResolvedValue(
-        failureMe("ACCOUNT_INACTIVE"),
-      ) as unknown as typeof fetch;
-    vi.spyOn(
-      googleIdentityServices,
-      "loadGoogleIdentityServices",
-    ).mockRejectedValue(new Error("gis unavailable in test"));
-
-    render(
-      <MemoryRouter initialEntries={["/login"]}>
-        <AuthProvider>
-          <LoginPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderLogin();
 
     expect(
       await screen.findByText(
-        "This account is not active. Please contact your Admin.",
+        "Sign in with your username and password to continue.",
       ),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText("Username")).toHaveAttribute("type", "text");
+    expect(screen.getByLabelText("Password")).toHaveAttribute(
+      "type",
+      "password",
+    );
+    expect(document.querySelector('script[src*="accounts.google.com"]')).toBe(
+      null,
+    );
   });
 
-  it("fetches a nonce, initializes GIS with it, and binds the resulting credential to /api/auth/login", async () => {
-    const { accountsId, fireCredential, initializedWith } = fakeAccountsId();
-    vi.spyOn(
-      googleIdentityServices,
-      "loadGoogleIdentityServices",
-    ).mockResolvedValue(accountsId);
-
+  it("posts the credentials to /api/auth/login and redirects on success", async () => {
     let loggedIn = false;
     const fetchMock = vi.fn((url: string) => {
-      if (url === "/api/auth/nonce")
-        return Promise.resolve(successNonce("nonce-abc"));
-      if (url === "/api/auth/login") {
-        loggedIn = true;
-        return Promise.resolve(successLogin("Agent"));
-      }
-      if (url === "/api/auth/me")
-        return Promise.resolve(
-          loggedIn ? successMe("Agent") : failureMe("AUTH_REQUIRED"),
-        );
-      return Promise.resolve(failureMe("AUTH_REQUIRED"));
-    });
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter initialEntries={["/login"]}>
-        <AuthProvider>
-          <LoginPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(initializedWith()).toEqual({
-        client_id: "test-client-id",
-        nonce: "nonce-abc",
-      });
-    });
-
-    fireCredential("gis-issued-id-token");
-
-    await waitFor(() => {
-      const loginCall = fetchMock.mock.calls.find(
-        ([url]) => url === "/api/auth/login",
-      );
-      expect(loginCall).toBeDefined();
-      const init = (loginCall as unknown as [string, RequestInit])[1];
-      expect(init.body).toBe(
-        JSON.stringify({ credential: "gis-issued-id-token" }),
-      );
-    });
-
-    // The nonce is proven server-side via the ID token's own signed nonce
-    // claim (server/auth/google-verifier.ts), not a separate field the
-    // frontend sends — so binding is confirmed by GIS having been
-    // initialized with the exact nonce the BFF issued, above.
-    expect(
-      fetchMock.mock.calls.filter(([url]) => url === "/api/auth/nonce"),
-    ).toHaveLength(1);
-  });
-
-  it("ignores a second credential callback fired while the first login is still in flight", async () => {
-    const { accountsId, fireCredential, initializedWith } = fakeAccountsId();
-    vi.spyOn(
-      googleIdentityServices,
-      "loadGoogleIdentityServices",
-    ).mockResolvedValue(accountsId);
-
-    let loggedIn = false;
-    let resolveLogin: (() => void) | undefined;
-    const fetchMock = vi.fn((url: string) => {
-      if (url === "/api/auth/nonce") return Promise.resolve(successNonce());
-      if (url === "/api/auth/login")
-        return new Promise((resolve) => {
-          resolveLogin = () => {
-            loggedIn = true;
-            resolve(successLogin("Agent"));
-          };
-        });
-      if (url === "/api/auth/me")
-        return Promise.resolve(
-          loggedIn ? successMe("Agent") : failureMe("AUTH_REQUIRED"),
-        );
-      return Promise.resolve(failureMe("AUTH_REQUIRED"));
-    });
-    global.fetch = fetchMock as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter initialEntries={["/login"]}>
-        <AuthProvider>
-          <LoginPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => expect(initializedWith()).toBeDefined());
-
-    fireCredential("first-credential");
-    await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.filter(([url]) => url === "/api/auth/login"),
-      ).toHaveLength(1);
-    });
-
-    // A second callback fires (double-click / GIS re-invocation) while the
-    // first login call is still pending.
-    fireCredential("second-credential");
-
-    resolveLogin?.();
-
-    await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.filter(([url]) => url === "/api/auth/login"),
-      ).toHaveLength(1);
-    });
-  });
-
-  it("safely handles a nonce-fetch failure by showing the generic unavailable message", async () => {
-    vi.spyOn(
-      googleIdentityServices,
-      "loadGoogleIdentityServices",
-    ).mockResolvedValue(fakeAccountsId().accountsId);
-    global.fetch = vi.fn((url: string) => {
-      if (url === "/api/auth/nonce")
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: async () => ({
-            ok: false,
-            requestId: "r1",
-            error: { code: "RATE_LIMITED", message: "x" },
-          }),
-        });
-      return Promise.resolve(failureMe("AUTH_REQUIRED"));
-    }) as unknown as typeof fetch;
-
-    render(
-      <MemoryRouter initialEntries={["/login"]}>
-        <AuthProvider>
-          <LoginPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
-
-    expect(
-      await screen.findByText(
-        "Sign-in is temporarily unavailable. Please try again shortly.",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("never stores the nonce or ID token in localStorage or sessionStorage", async () => {
-    const { accountsId, fireCredential, initializedWith } = fakeAccountsId();
-    vi.spyOn(
-      googleIdentityServices,
-      "loadGoogleIdentityServices",
-    ).mockResolvedValue(accountsId);
-    let loggedIn = false;
-    global.fetch = vi.fn((url: string) => {
-      if (url === "/api/auth/nonce")
-        return Promise.resolve(successNonce("nonce-xyz"));
       if (url === "/api/auth/login") {
         loggedIn = true;
         return Promise.resolve(successLogin("Admin"));
       }
       if (url === "/api/auth/me")
         return Promise.resolve(
-          loggedIn ? successMe("Admin") : failureMe("AUTH_REQUIRED"),
+          loggedIn ? successMe("Admin") : failure("AUTH_REQUIRED"),
         );
-      return Promise.resolve(failureMe("AUTH_REQUIRED"));
-    }) as unknown as typeof fetch;
+      return Promise.resolve(failure("AUTH_REQUIRED"));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
 
-    render(
-      <MemoryRouter initialEntries={["/login"]}>
-        <AuthProvider>
-          <LoginPage />
-        </AuthProvider>
-      </MemoryRouter>,
+    renderLogin();
+    await screen.findByLabelText("Username");
+    fillAndSubmit("ryanzkey", "the-password");
+
+    expect(await screen.findByText("Admin dashboard")).toBeInTheDocument();
+    const [, init] = loginCalls(fetchMock)[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(
+      JSON.stringify({ username: "ryanzkey", password: "the-password" }),
+    );
+  });
+
+  it("shows an error and clears the password when the credentials are rejected", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(failure("AUTH_REQUIRED")) as unknown as typeof fetch;
+
+    renderLogin();
+    await screen.findByLabelText("Username");
+    fillAndSubmit("ryanzkey", "wrong");
+
+    expect(
+      await screen.findByText("Incorrect username or password."),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+  });
+
+  it("shows a rate-limit message when too many attempts are made", async () => {
+    global.fetch = vi.fn((url: string) =>
+      Promise.resolve(
+        url === "/api/auth/login"
+          ? failure("RATE_LIMITED")
+          : failure("AUTH_REQUIRED"),
+      ),
+    ) as unknown as typeof fetch;
+
+    renderLogin();
+    await screen.findByLabelText("Username");
+    fillAndSubmit("ryanzkey", "pw");
+
+    expect(
+      await screen.findByText(
+        "Too many sign-in attempts. Please wait and try again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("does not submit when a field is empty", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(failure("AUTH_REQUIRED"));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderLogin();
+    await screen.findByLabelText("Username");
+    fillAndSubmit("ryanzkey", "");
+
+    expect(
+      await screen.findByText("Enter your username and password."),
+    ).toBeInTheDocument();
+    expect(loginCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("ignores a second submit while the first login is still in flight", async () => {
+    let resolveLogin: (() => void) | undefined;
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/auth/login")
+        return new Promise((resolve) => {
+          resolveLogin = () => resolve(failure("AUTH_REQUIRED"));
+        });
+      return Promise.resolve(failure("AUTH_REQUIRED"));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    renderLogin();
+    await screen.findByLabelText("Username");
+    fillAndSubmit("ryanzkey", "pw");
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Signing you in…" }).closest("form")!,
     );
 
-    await waitFor(() => expect(initializedWith()).toBeDefined());
-    fireCredential("id-token-value");
+    await waitFor(() => expect(loginCalls(fetchMock)).toHaveLength(1));
+    resolveLogin?.();
+    expect(
+      await screen.findByText("Incorrect username or password."),
+    ).toBeInTheDocument();
+    expect(loginCalls(fetchMock)).toHaveLength(1);
+  });
 
-    await waitFor(() => {
-      expect(
-        (global.fetch as ReturnType<typeof vi.fn>).mock.calls.some(
-          ([url]) => url === "/api/auth/login",
-        ),
-      ).toBe(true);
-    });
+  it("never stores the password in localStorage or sessionStorage", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(failure("AUTH_REQUIRED")) as unknown as typeof fetch;
+
+    renderLogin();
+    await screen.findByLabelText("Username");
+    fillAndSubmit("ryanzkey", "secret-password-value");
+    await screen.findByText("Incorrect username or password.");
 
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
-    expect(JSON.stringify(localStorage)).not.toContain("nonce-xyz");
-    expect(JSON.stringify(localStorage)).not.toContain("id-token-value");
-    expect(JSON.stringify(sessionStorage)).not.toContain("nonce-xyz");
-    expect(JSON.stringify(sessionStorage)).not.toContain("id-token-value");
+  });
+
+  it("shows the account-inactive message when the session state carries that error", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        failure("ACCOUNT_INACTIVE"),
+      ) as unknown as typeof fetch;
+
+    renderLogin();
+
+    expect(
+      await screen.findByText(
+        "This account is not active. Please contact your Admin.",
+      ),
+    ).toBeInTheDocument();
   });
 });

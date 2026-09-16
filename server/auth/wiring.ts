@@ -1,15 +1,11 @@
 import { Redis } from "@upstash/redis";
 import { randomUUID } from "node:crypto";
 
+import { verifyAdminCredentials } from "./admin-credentials";
 import { createAppsScriptAuthClient } from "./apps-script-client";
 import { createAppsScriptCrudClient } from "../crud/apps-script-crud-client";
-import { nodeCryptoAdapter, randomToken, sha256Base64Url } from "./crypto";
+import { nodeCryptoAdapter, randomToken } from "./crypto";
 import { loadServerAuthEnv, type ServerAuthEnv } from "./env";
-import {
-  createGoogleIdTokenVerifier,
-  isPermittedGoogleAccountDomain,
-} from "./google-verifier";
-import { createUpstashNonceStore } from "./nonce-store";
 import { createUpstashRateLimiter } from "./rate-limit";
 import type { RouteDependencies } from "./route-types";
 
@@ -58,8 +54,11 @@ export function buildRouteDependencies(
     requestId: { generate: () => randomUUID() },
     randomToken,
     crypto: nodeCryptoAdapter,
-    googleVerifier: createGoogleIdTokenVerifier(env.googleClientId),
-    nonceStore: createUpstashNonceStore(redis, sha256Base64Url, randomToken),
+    adminLogin: {
+      email: env.adminEmail,
+      providerSubject: env.adminProviderSubject,
+      verify: verifyAdminCredentials,
+    },
     rateLimiter: createUpstashRateLimiter(redis),
     appsScript,
     appsScriptCrud,
@@ -67,15 +66,14 @@ export function buildRouteDependencies(
     sessionIdleSeconds: SESSION_IDLE_SECONDS,
     sessionAbsoluteSeconds: SESSION_ABSOLUTE_SECONDS,
     appOrigin: env.appOrigin,
-    isPermittedGoogleAccountDomain,
   };
 }
 
 let cached: RouteDependencies | undefined;
 
 /**
- * Reuses one dependency graph (Redis client, rate limiters, Google verifier
- * and its JWKS cache) across warm invocations of the same serverless
+ * Reuses one dependency graph (Redis client, rate limiters, Apps Script
+ * clients) across warm invocations of the same serverless
  * instance. A failed build is never cached, so a misconfigured environment
  * keeps failing closed on every call rather than being remembered as good.
  */

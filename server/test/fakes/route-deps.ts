@@ -16,20 +16,10 @@ import {
   AppsScriptDeniedError as CrudAppsScriptDeniedError,
   AppsScriptUnavailableError as CrudAppsScriptUnavailableError,
 } from "../../crud/apps-script-crud-client";
-import {
-  nodeCryptoAdapter,
-  randomToken,
-  sha256Base64Url,
-} from "../../auth/crypto";
-import type {
-  GoogleIdTokenVerifier,
-  VerifiedGoogleIdentity,
-} from "../../auth/google-verifier";
-import { isPermittedGoogleAccountDomain } from "../../auth/google-verifier";
-import type { NonceStore } from "../../auth/nonce-store";
+import { nodeCryptoAdapter, randomToken } from "../../auth/crypto";
 import { RateLimitUnavailableError } from "../../auth/rate-limit";
 import type { RateLimiter } from "../../auth/rate-limit";
-import type { RouteDependencies } from "../../auth/route-types";
+import type { AdminLogin, RouteDependencies } from "../../auth/route-types";
 
 export {
   AppsScriptDeniedError,
@@ -54,39 +44,17 @@ export function fakeOutageRateLimiter(): RateLimiter {
   };
 }
 
-export function fakeInMemoryNonceStore(): NonceStore {
-  const store = new Map<string, string>();
+export function fakeAdminLogin(
+  overrides: Partial<AdminLogin> = {},
+): AdminLogin {
   return {
-    async create() {
-      const loginToken = randomToken(32);
-      const nonce = randomToken(32);
-      store.set(loginToken, sha256Base64Url(nonce));
-      return { loginToken, nonce, createdAt: new Date().toISOString() };
-    },
-    async peek(loginToken) {
-      const nonceHash = store.get(loginToken);
-      return nonceHash === undefined ? null : { nonceHash };
-    },
-    async consumeIfMatches(loginToken, expectedNonceHash) {
-      const stored = store.get(loginToken);
-      if (stored === undefined || stored !== expectedNonceHash) return false;
-      store.delete(loginToken);
-      return true;
-    },
-    async discard(loginToken) {
-      store.delete(loginToken);
-    },
-  };
-}
-
-export function fakeGoogleVerifier(
-  identity: VerifiedGoogleIdentity | Error,
-): GoogleIdTokenVerifier {
-  return {
-    async verify() {
-      if (identity instanceof Error) throw identity;
-      return identity;
-    },
+    email: "admin@example.com",
+    providerSubject: "password:ryanzkey",
+    verify: vi.fn(
+      async (username: string, password: string) =>
+        username === "ryanzkey" && password === "correct-password",
+    ),
+    ...overrides,
   };
 }
 
@@ -120,8 +88,7 @@ export function baseRouteDependencies(
     requestId: { generate: () => "test-request-id" },
     randomToken,
     crypto: nodeCryptoAdapter,
-    googleVerifier: fakeGoogleVerifier(new Error("not configured")),
-    nonceStore: fakeInMemoryNonceStore(),
+    adminLogin: fakeAdminLogin(),
     rateLimiter: fakeAllowAllRateLimiter(),
     appsScript: fakeAppsScriptClient(new Error("not configured")),
     appsScriptCrud: fakeAppsScriptCrudClient(new Error("not configured")),
@@ -129,7 +96,6 @@ export function baseRouteDependencies(
     sessionIdleSeconds: 1800,
     sessionAbsoluteSeconds: 28800,
     appOrigin: "https://app.example.com",
-    isPermittedGoogleAccountDomain,
     ...overrides,
   };
 }

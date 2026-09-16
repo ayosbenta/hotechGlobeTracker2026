@@ -1,3 +1,5 @@
+import { DEFAULT_ADMIN_PROVIDER_SUBJECT } from "./admin-credentials";
+
 export type HmacKeyStatus = "active" | "retiring" | "disabled";
 export interface HmacKey {
   secret: string;
@@ -5,7 +7,9 @@ export interface HmacKey {
 }
 
 export interface ServerAuthEnv {
-  googleClientId: string;
+  /** Email of the Admin's Users row that the password login signs in as. */
+  adminEmail: string | null;
+  adminProviderSubject: string;
   appsScriptInternalUrl: string;
   /**
    * MVP-2A: the Apps Script Web App's internal-CRUD ingress URL
@@ -31,7 +35,6 @@ export class EnvValidationError extends Error {
 }
 
 const REQUIRED_SERVER_KEYS = [
-  "GOOGLE_CLIENT_ID",
   "APPS_SCRIPT_INTERNAL_URL",
   "APPS_SCRIPT_CRUD_URL",
   "INTERNAL_AUDIENCE",
@@ -50,6 +53,13 @@ function required(
   const value = source[key]?.trim();
   if (!value) throw new EnvValidationError();
   return value;
+}
+
+function optional(
+  source: Record<string, string | undefined>,
+  key: string,
+): string | null {
+  return source[key]?.trim() || null;
 }
 
 function httpsUrl(value: string): string {
@@ -114,9 +124,12 @@ export function loadServerAuthEnv(
       throw new EnvValidationError();
   }
 
-  const googleClientId = required(source, "GOOGLE_CLIENT_ID");
-  if (!/^[A-Za-z0-9.-]{8,255}$/.test(googleClientId))
+  const adminEmail = optional(source, "ADMIN_EMAIL");
+  if (adminEmail !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail))
     throw new EnvValidationError();
+  const adminProviderSubject =
+    optional(source, "ADMIN_PROVIDER_SUBJECT") ??
+    DEFAULT_ADMIN_PROVIDER_SUBJECT;
 
   const appsScriptInternalUrl = httpsUrl(
     required(source, "APPS_SCRIPT_INTERNAL_URL"),
@@ -146,7 +159,8 @@ export function loadServerAuthEnv(
   const appOrigin = httpsUrl(required(source, "APP_ORIGIN"));
 
   return {
-    googleClientId,
+    adminEmail,
+    adminProviderSubject,
     appsScriptInternalUrl,
     appsScriptCrudUrl,
     internalAudience,

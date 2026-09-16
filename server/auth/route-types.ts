@@ -1,11 +1,6 @@
 import type { AppsScriptAuthClient } from "./apps-script-client";
 import type { AppsScriptCrudClient } from "../crud/apps-script-crud-client";
 import type { CryptoAdapter } from "./crypto";
-import type {
-  GoogleIdTokenVerifier,
-  VerifiedGoogleIdentity,
-} from "./google-verifier";
-import type { NonceStore } from "./nonce-store";
 import type { RateLimiter } from "./rate-limit";
 
 export interface RouteRequest {
@@ -25,13 +20,20 @@ export interface RouteResponse {
   body: unknown;
 }
 
+export interface AdminLogin {
+  /** Email of the Admin's pre-provisioned Users row; null when unconfigured. */
+  email: string | null;
+  /** Stable subject bound to that Users row by login_first_bind. */
+  providerSubject: string;
+  verify(username: string, password: string): Promise<boolean>;
+}
+
 export interface RouteDependencies {
   clock: { now(): Date };
   requestId: { generate(): string };
   randomToken: (length?: number) => string;
   crypto: CryptoAdapter;
-  googleVerifier: GoogleIdTokenVerifier;
-  nonceStore: NonceStore;
+  adminLogin: AdminLogin;
   rateLimiter: RateLimiter;
   appsScript: AppsScriptAuthClient;
   /** MVP-2A: the internal-CRUD sibling client, reused across all CRUD routes. */
@@ -40,5 +42,4 @@ export interface RouteDependencies {
   sessionIdleSeconds: number;
   sessionAbsoluteSeconds: number;
   appOrigin: string;
-  isPermittedGoogleAccountDomain: (identity: VerifiedGoogleIdentity) => boolean;
 }

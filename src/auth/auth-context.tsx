@@ -12,7 +12,7 @@ import {
   AuthApiError,
   fetchCurrentSession,
   logout as logoutRequest,
-  submitGoogleCredential,
+  submitPasswordLogin,
 } from "./api-client";
 import type { AuthState } from "./types";
 
@@ -20,8 +20,14 @@ interface AuthContextValue {
   readonly state: AuthState;
   /** Re-runs GET /api/auth/me. Used after login and to recover from a stale session. */
   readonly refresh: () => Promise<void>;
-  /** Exchanges a GIS ID token credential for a session via POST /api/auth/login. */
-  readonly loginWithGoogleCredential: (credential: string) => Promise<void>;
+  /**
+   * Exchanges a username/password for a session via POST /api/auth/login.
+   * Rejects with the AuthApiError on failure without changing auth state.
+   */
+  readonly loginWithPassword: (
+    username: string,
+    password: string,
+  ) => Promise<void>;
   readonly logout: () => Promise<void>;
 }
 
@@ -63,14 +69,9 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
     }
   }, []);
 
-  const loginWithGoogleCredential = useCallback(
-    async (credential: string) => {
-      try {
-        await submitGoogleCredential(credential);
-      } catch (error) {
-        setState(errorFromUnknown(error));
-        throw error;
-      }
+  const loginWithPassword = useCallback(
+    async (username: string, password: string) => {
+      await submitPasswordLogin(username, password);
       await refresh();
     },
     [refresh],
@@ -97,8 +98,8 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ state, refresh, loginWithGoogleCredential, logout }),
-    [state, refresh, loginWithGoogleCredential, logout],
+    () => ({ state, refresh, loginWithPassword, logout }),
+    [state, refresh, loginWithPassword, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

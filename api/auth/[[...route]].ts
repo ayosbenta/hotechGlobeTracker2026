@@ -4,7 +4,6 @@ import { handleCsrfRoute } from "../../server/auth/routes/csrf";
 import { handleLoginRoute } from "../../server/auth/routes/login";
 import { handleLogoutRoute } from "../../server/auth/routes/logout";
 import { handleMeRoute } from "../../server/auth/routes/me";
-import { handleNonceRoute } from "../../server/auth/routes/nonce";
 import {
   readJsonBody,
   toRouteRequest,
@@ -44,10 +43,9 @@ const AUTH_ROUTES: Record<string, AuthHandler> = {
   login: handleLoginRoute,
   logout: handleLogoutRoute,
   me: handleMeRoute,
-  nonce: handleNonceRoute,
 };
 
-/** Unified handler for /api/auth/{csrf,login,logout,me,nonce}. */
+/** Unified handler for /api/auth/{csrf,login,logout,me}. */
 export default async function handler(
   request: IncomingMessage,
   response: ServerResponse,

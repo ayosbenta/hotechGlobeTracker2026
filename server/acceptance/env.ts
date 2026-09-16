@@ -3,7 +3,7 @@ import type { SigningKey } from "../auth/signing";
 /**
  * Minimal, dedicated environment loader for the Phase 03C1A live acceptance
  * runner only. It intentionally does not reuse `server/auth/env.ts`, which
- * validates the full BFF environment (Google, Upstash, rate limiting) that
+ * validates the full BFF environment (Upstash, rate limiting) that
  * this narrowly scoped tool has no need for and must not require.
  *
  * Fails closed on any missing, malformed, or production-looking value. Never
@@ -18,7 +18,7 @@ export interface AcceptanceRunnerConfig {
   signingKey: SigningKey;
   /** A pre-provisioned isolated user's normalized email, for login_first_bind. */
   testUserEmail: string;
-  /** An arbitrary non-empty synthetic Google subject for first bind. */
+  /** An arbitrary non-empty synthetic provider subject for first bind. */
   testUserSubject: string;
 }
 

@@ -2,16 +2,8 @@ import {
   AppsScriptDeniedError,
   AppsScriptUnavailableError,
 } from "../apps-script-client";
-import {
-  clearLoginCookie,
-  LOGIN_COOKIE_NAME,
-  parseCookies,
-  sessionCookie,
-  csrfCookie,
-} from "../cookies";
-import { GoogleVerificationError } from "../google-verifier";
+import { sessionCookie, csrfCookie } from "../cookies";
 import { BffError } from "../http-envelope";
-import { NonceStoreUnavailableError } from "../nonce-store";
 import { originIsAllowed } from "../origin-check";
 import { privacyKeyFor, RateLimitUnavailableError } from "../rate-limit";
 import { jsonFailure, jsonSuccess } from "../respond";
@@ -22,19 +14,32 @@ import type {
   RouteResponse,
 } from "../route-types";
 
+const MAX_FIELD_LENGTH = 256;
+
 interface LoginRequestBody {
-  credential: string;
+  username: string;
+  password: string;
+}
+
+function nonEmptyField(body: Record<string, unknown>, key: string): string {
+  const value = body[key];
+  if (
+    typeof value !== "string" ||
+    value === "" ||
+    value.length > MAX_FIELD_LENGTH
+  )
+    throw new BffError("VALIDATION_ERROR");
+  return value;
 }
 
 function parseBody(body: unknown): LoginRequestBody {
-  if (
-    body === null ||
-    typeof body !== "object" ||
-    typeof (body as Record<string, unknown>).credential !== "string" ||
-    (body as Record<string, unknown>).credential === ""
-  )
+  if (body === null || typeof body !== "object")
     throw new BffError("VALIDATION_ERROR");
-  return { credential: (body as { credential: string }).credential };
+  const record = body as Record<string, unknown>;
+  return {
+    username: nonEmptyField(record, "username"),
+    password: nonEmptyField(record, "password"),
+  };
 }
 
 export async function handleLoginRoute(
@@ -42,9 +47,6 @@ export async function handleLoginRoute(
   deps: RouteDependencies,
 ): Promise<RouteResponse> {
   const requestId = deps.requestId.generate();
-  const cookies = parseCookies(request.cookieHeader);
-  const loginToken = cookies[LOGIN_COOKIE_NAME];
-  let clearLogin = false;
 
   try {
     if (request.method !== "POST") throw new BffError("NOT_FOUND");
@@ -55,42 +57,25 @@ export async function handleLoginRoute(
     const ipLimit = await deps.rateLimiter.check("login-ip", ipKey);
     if (!ipLimit.allowed) throw new BffError("RATE_LIMITED");
 
-    const { credential } = parseBody(request.body);
-    if (!loginToken) throw new BffError("VALIDATION_ERROR");
+    const { username, password } = parseBody(request.body);
 
-    const transaction = await deps.nonceStore.peek(loginToken);
-    if (transaction === null) throw new BffError("VALIDATION_ERROR");
+    const userKey = privacyKeyFor(deps, username.trim().toLowerCase());
+    const userLimit = await deps.rateLimiter.check("login-user", userKey);
+    if (!userLimit.allowed) throw new BffError("RATE_LIMITED");
 
-    // Verify the Google credential first; the transaction is not consumed
-    // until both the credential and its nonce claim are confirmed valid.
-    const identity = await deps.googleVerifier.verify(credential);
+    if (!(await deps.adminLogin.verify(username, password)))
+      throw new BffError("AUTH_REQUIRED");
 
-    if (deps.crypto.sha256(identity.nonce) !== transaction.nonceHash)
-      throw new GoogleVerificationError();
-
-    if (!deps.isPermittedGoogleAccountDomain(identity)) {
-      clearLogin = true;
-      await deps.nonceStore.discard(loginToken);
-      throw new BffError("FORBIDDEN");
-    }
-
-    const consumed = await deps.nonceStore.consumeIfMatches(
-      loginToken,
-      transaction.nonceHash,
-    );
-    clearLogin = true;
-    if (!consumed) throw new BffError("REPLAY_OR_CONFLICT");
-
-    const subKey = privacyKeyFor(deps, identity.sub);
-    const subLimit = await deps.rateLimiter.check("login-sub", subKey);
-    if (!subLimit.allowed) throw new BffError("RATE_LIMITED");
+    if (!deps.adminLogin.email) throw new BffError("AUTH_SERVICE_UNAVAILABLE");
 
     const sessionToken = deps.randomToken(32);
     const csrfToken = deps.randomToken(32);
 
+    // Apps Script still owns session issuance; the password check above
+    // replaces Google's verified-email assertion for the Admin's Users row.
     const result = await deps.appsScript.execute("login_first_bind", {
-      email: identity.email,
-      sub: identity.sub,
+      email: deps.adminLogin.email,
+      sub: deps.adminLogin.providerSubject,
       email_verified: true,
       session_token: sessionToken,
       csrf_token: csrfToken,
@@ -106,23 +91,17 @@ export async function handleLoginRoute(
         redirectTo,
       },
       [
-        clearLoginCookie(),
         sessionCookie(sessionToken, deps.sessionAbsoluteSeconds),
         csrfCookie(csrfToken, deps.sessionAbsoluteSeconds),
       ],
     );
   } catch (error) {
-    const cookieClears = clearLogin || loginToken ? [clearLoginCookie()] : [];
-    return jsonFailure(requestId, mapLoginError(error), cookieClears);
+    return jsonFailure(requestId, mapLoginError(error));
   }
 }
 
 function mapLoginError(error: unknown): unknown {
   if (error instanceof BffError) return error;
-  if (error instanceof GoogleVerificationError)
-    return new BffError("VALIDATION_ERROR");
-  if (error instanceof NonceStoreUnavailableError)
-    return new BffError("UPSTREAM_UNAVAILABLE");
   if (error instanceof RateLimitUnavailableError)
     return new BffError("UPSTREAM_UNAVAILABLE");
   if (error instanceof AppsScriptUnavailableError)

@@ -211,6 +211,6 @@ test("an unauthenticated visitor to a protected dashboard route is redirected to
   await page.goto("/admin/dashboard");
   await expect(page).toHaveURL(/\/login$/);
   await expect(
-    page.getByText("Sign in with your Google account to continue."),
+    page.getByText("Sign in with your username and password to continue."),
   ).toBeVisible();
 });

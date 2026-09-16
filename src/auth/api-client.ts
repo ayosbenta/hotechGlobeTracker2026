@@ -98,15 +98,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (body as { data: T }).data;
 }
 
-export interface NonceResult {
-  readonly nonce: string;
-  readonly expiresAt: string;
-}
-
-export function fetchLoginNonce(): Promise<NonceResult> {
-  return request<NonceResult>("/api/auth/nonce", { method: "POST" });
-}
-
 export interface LoginResult {
   readonly user: AuthUser;
   readonly redirectTo: string;
@@ -123,15 +114,16 @@ function toAuthUser(raw: { fullName: string; role: string }): AuthUser {
   return { fullName: raw.fullName, role };
 }
 
-export async function submitGoogleCredential(
-  credential: string,
+export async function submitPasswordLogin(
+  username: string,
+  password: string,
 ): Promise<LoginResult> {
   const data = await request<{
     user: { fullName: string; role: string };
     redirectTo: string;
   }>("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify({ credential }),
+    body: JSON.stringify({ username, password }),
   });
   return { user: toAuthUser(data.user), redirectTo: data.redirectTo };
 }

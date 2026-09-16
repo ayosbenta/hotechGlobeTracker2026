@@ -21,7 +21,7 @@ export interface Mvp4AcceptanceConfig {
   signingKey: SigningKey;
   /** A pre-provisioned isolated Admin user's normalized email, for login_first_bind. */
   testAdminEmail: string;
-  /** An arbitrary non-empty synthetic Google subject for first bind. */
+  /** An arbitrary non-empty synthetic provider subject for first bind. */
   testAdminSubject: string;
 }
 

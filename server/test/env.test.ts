@@ -4,7 +4,7 @@ import { EnvValidationError, loadServerAuthEnv } from "../auth/env";
 
 function validEnv(overrides: Record<string, string | undefined> = {}) {
   return {
-    GOOGLE_CLIENT_ID: "client-id.apps.googleusercontent.com",
+    ADMIN_EMAIL: "admin@example.com",
     APPS_SCRIPT_INTERNAL_URL: "https://script.google.com/macros/s/abc/exec",
     APPS_SCRIPT_CRUD_URL: "https://script.google.com/macros/s/abc/exec",
     INTERNAL_AUDIENCE: "hotech-internal",
@@ -27,8 +27,30 @@ describe("server env validation", () => {
 
   it("fails closed when a required key is missing", () => {
     const env = validEnv();
-    delete env.GOOGLE_CLIENT_ID;
+    delete env.APPS_SCRIPT_INTERNAL_URL;
     expect(() => loadServerAuthEnv(env)).toThrow(EnvValidationError);
+  });
+
+  it("accepts a missing ADMIN_EMAIL and defaults the admin subject", () => {
+    const env = validEnv();
+    delete env.ADMIN_EMAIL;
+    const loaded = loadServerAuthEnv(env);
+    expect(loaded.adminEmail).toBeNull();
+    expect(loaded.adminProviderSubject).toBe("password:ryanzkey");
+  });
+
+  it("uses ADMIN_PROVIDER_SUBJECT when provided", () => {
+    const loaded = loadServerAuthEnv(
+      validEnv({ ADMIN_PROVIDER_SUBJECT: "existing-subject" }),
+    );
+    expect(loaded.adminEmail).toBe("admin@example.com");
+    expect(loaded.adminProviderSubject).toBe("existing-subject");
+  });
+
+  it("fails closed when ADMIN_EMAIL is malformed", () => {
+    expect(() =>
+      loadServerAuthEnv(validEnv({ ADMIN_EMAIL: "not-an-email" })),
+    ).toThrow(EnvValidationError);
   });
 
   it("fails closed when APPS_SCRIPT_INTERNAL_URL is not https", () => {

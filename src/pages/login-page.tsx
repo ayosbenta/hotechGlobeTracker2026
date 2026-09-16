@@ -1,91 +1,50 @@
 import { Orbit } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 
+import { AuthApiError } from "@/auth/api-client";
 import { useAuth } from "@/auth/auth-context";
-import { fetchLoginNonce } from "@/auth/api-client";
-import { loadGoogleIdentityServices } from "@/auth/google-identity-services";
 import { DashboardCard } from "@/components/dashboard/dashboard-ui";
+import { Button } from "@/components/ui/button";
 import { environment } from "@/config/env";
 import { safeDestinationForRole } from "@/routes/constants";
 
-type LoginPhase = "loading" | "ready" | "signing-in" | "unavailable";
+function loginErrorMessage(error: unknown): string {
+  const code = error instanceof AuthApiError ? error.code : null;
+  switch (code) {
+    case "AUTH_REQUIRED":
+    case "VALIDATION_ERROR":
+      return "Incorrect username or password.";
+    case "RATE_LIMITED":
+      return "Too many sign-in attempts. Please wait and try again.";
+    case "ACCOUNT_INACTIVE":
+    case "ACCOUNT_LOCKED":
+      return "This account is not active. Please contact your Admin.";
+    case "AUTH_SERVICE_UNAVAILABLE":
+    case "UPSTREAM_UNAVAILABLE":
+      return "Sign-in is temporarily unavailable. Please try again shortly.";
+    default:
+      return "Sign-in was not accepted. Please try again, or contact your Admin if this continues.";
+  }
+}
+
+const inputClassName =
+  "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-[#07183f] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:opacity-60";
 
 /**
- * GIS login screen. Never accepts a password, OTP, or any credential typed
- * directly into this app: the only input is the ID token GIS itself returns
- * after the user completes Google sign-in in Google's own UI.
+ * Password login screen. Credentials are held only in component state for
+ * the duration of the request and are never written to browser storage.
  */
 export function LoginPage() {
-  const { state, loginWithGoogleCredential } = useAuth();
+  const { state, loginWithPassword } = useAuth();
   const location = useLocation();
-  const buttonContainerRef = useRef<HTMLDivElement | null>(null);
-  const [phase, setPhase] = useState<LoginPhase>("loading");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  // Guards against a double-click on the GIS button, or GIS invoking its
-  // callback more than once, starting a second concurrent login attempt
-  // while one is still in flight.
+  // Guards against a double submit starting a second concurrent login
+  // attempt while one is still in flight.
   const loginInFlightRef = useRef(false);
-
-  useEffect(() => {
-    if (state.status !== "unauthenticated") return;
-    if (!environment.googleClientId) {
-      setPhase("unavailable");
-      return;
-    }
-
-    let cancelled = false;
-
-    async function setUp() {
-      try {
-        const [{ nonce }, accountsId] = await Promise.all([
-          fetchLoginNonce(),
-          loadGoogleIdentityServices(),
-        ]);
-        if (cancelled) return;
-
-        accountsId.initialize({
-          client_id: environment.googleClientId!,
-          nonce,
-          ux_mode: "popup",
-          callback: (response) => {
-            if (loginInFlightRef.current) return;
-            loginInFlightRef.current = true;
-            setPhase("signing-in");
-            setErrorMessage(null);
-            loginWithGoogleCredential(response.credential)
-              .catch(() => {
-                if (cancelled) return;
-                setPhase("ready");
-                setErrorMessage(
-                  "Sign-in was not accepted. Please try again, or contact your Admin if this continues.",
-                );
-              })
-              .finally(() => {
-                loginInFlightRef.current = false;
-              });
-          },
-        });
-
-        if (buttonContainerRef.current) {
-          accountsId.renderButton(buttonContainerRef.current, {
-            theme: "outline",
-            size: "large",
-            width: 280,
-            text: "signin_with",
-          });
-        }
-        setPhase("ready");
-      } catch {
-        if (!cancelled) setPhase("unavailable");
-      }
-    }
-
-    void setUp();
-    return () => {
-      cancelled = true;
-    };
-  }, [state.status, loginWithGoogleCredential]);
 
   if (state.status === "checking") return null;
 
@@ -93,6 +52,27 @@ export function LoginPage() {
     const attempted = (location.state as { from?: unknown } | null)?.from;
     const destination = safeDestinationForRole(attempted, state.user.role);
     return <Navigate replace to={destination} />;
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (loginInFlightRef.current) return;
+    if (!username.trim() || !password) {
+      setErrorMessage("Enter your username and password.");
+      return;
+    }
+    loginInFlightRef.current = true;
+    setSubmitting(true);
+    setErrorMessage(null);
+    try {
+      await loginWithPassword(username.trim(), password);
+    } catch (error) {
+      setPassword("");
+      setErrorMessage(loginErrorMessage(error));
+    } finally {
+      loginInFlightRef.current = false;
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -105,31 +85,42 @@ export function LoginPage() {
           {environment.appName}
         </h1>
         <p className="mt-2 text-sm text-[#60749a]">
-          Sign in with your Google account to continue.
+          Sign in with your username and password to continue.
         </p>
 
-        <div className="mt-8 flex flex-col items-center gap-3">
-          {phase === "loading" || phase === "signing-in" ? (
-            <p className="text-sm text-[#60749a]" role="status">
-              {phase === "signing-in"
-                ? "Signing you in…"
-                : "Preparing sign-in…"}
-            </p>
-          ) : phase === "unavailable" ? (
-            <p className="text-sm text-rose-600" role="alert">
-              Sign-in is temporarily unavailable. Please try again shortly.
-            </p>
-          ) : null}
-          <div
-            aria-hidden={phase === "signing-in"}
-            className={
-              phase === "signing-in"
-                ? "pointer-events-none opacity-50"
-                : undefined
-            }
-            ref={buttonContainerRef}
-          />
-        </div>
+        <form
+          className="mt-8 flex flex-col gap-4 text-left"
+          noValidate
+          onSubmit={(event) => void handleSubmit(event)}
+        >
+          <label className="text-sm font-medium text-[#07183f]">
+            Username
+            <input
+              autoComplete="username"
+              className={inputClassName}
+              disabled={submitting}
+              name="username"
+              onChange={(event) => setUsername(event.target.value)}
+              type="text"
+              value={username}
+            />
+          </label>
+          <label className="text-sm font-medium text-[#07183f]">
+            Password
+            <input
+              autoComplete="current-password"
+              className={inputClassName}
+              disabled={submitting}
+              name="password"
+              onChange={(event) => setPassword(event.target.value)}
+              type="password"
+              value={password}
+            />
+          </label>
+          <Button className="mt-2 w-full" disabled={submitting} type="submit">
+            {submitting ? "Signing you in…" : "Sign in"}
+          </Button>
+        </form>
 
         {errorMessage ? (
           <p className="mt-4 text-sm text-rose-600" role="alert">
@@ -137,7 +128,7 @@ export function LoginPage() {
           </p>
         ) : null}
 
-        {state.status === "error" ? (
+        {state.status === "error" && !errorMessage ? (
           <p className="mt-4 text-sm text-rose-600" role="alert">
             {state.error.code === "ACCOUNT_INACTIVE" ||
             state.error.code === "ACCOUNT_LOCKED"
